@@ -24,7 +24,8 @@ header {
 	gap: 12px;
 }
 header h1 { margin: 0; font-size: 20px; }
-header .sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+header > div:first-child { flex: 0 0 auto; }
+header .sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; white-space: nowrap; }
 .share {
 	border: 1px solid var(--accent);
 	background: var(--accent);
@@ -36,7 +37,12 @@ header .sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
 	white-space: nowrap;
 }
 .share:hover { filter: brightness(1.05); }
-.header-actions { display: flex; gap: 8px; }
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.plan-store { display: flex; gap: 6px; align-items: center; }
+.plan-store select {
+	font: inherit; padding: 8px 10px; max-width: 160px;
+	border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--ink);
+}
 .share.ghost { background: #fff; color: var(--accent); }
 
 .bestmix { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 13px; }

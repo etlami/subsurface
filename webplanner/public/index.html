@@ -18,8 +18,13 @@
 			<button class="tab-btn" data-tab="wizard">Assistent</button>
 		</nav>
 		<div class="header-actions">
+			<div class="plan-store">
+				<select id="planList" title="Gespeicherten Plan laden"></select>
+				<button id="savePlan" class="share ghost" title="Aktuellen Plan speichern">Speichern</button>
+				<button id="delPlan" class="share ghost" title="Gewählten Plan löschen">Löschen</button>
+			</div>
 			<button id="print" class="share ghost" title="Druckansicht / als PDF speichern">Drucken / PDF</button>
-			<button id="export" class="share ghost" title="Tauchplan als PNG-Bild exportieren">Export PNG</button>
+			<button id="export" class="share ghost" title="Tauchplan als PNG-Bild exportieren">PNG</button>
 			<button id="share" class="share" title="Teilbaren Link in die Zwischenablage kopieren">Teilen</button>
 		</div>
 	</header>
@@ -178,18 +183,6 @@
 				<label class="row">Reserve-Gas (bar) <input id="reservegas" type="number" min="0" max="200" value="40"></label>
 			</fieldset>
 
-			<fieldset>
-				<legend>Pläne</legend>
-				<div class="plans">
-					<input id="planName" type="text" placeholder="Name" maxlength="40">
-					<button id="savePlan" class="add">Speichern</button>
-				</div>
-				<div class="plans">
-					<select id="planList"></select>
-					<button id="loadPlan" class="add">Laden</button>
-					<button id="delPlan" class="add">Löschen</button>
-				</div>
-			</fieldset>
 		</aside>
 	</main>
 

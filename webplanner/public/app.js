@@ -481,10 +481,10 @@ function flash(m) { const b = $('share'), o = b.textContent; b.textContent = m; 
 
 const PLANS_KEY = 'webplanner_plans';
 const readPlans = () => { try { return JSON.parse(localStorage.getItem(PLANS_KEY)) || {}; } catch { return {}; } };
-function refreshPlanList() { const sel = $('planList'); const p = readPlans(); const n = Object.keys(p).sort(); sel.innerHTML = n.length ? n.map((x) => `<option>${x}</option>`).join('') : '<option value="">(keine)</option>'; }
-function savePlan() { const name = ($('planName').value || '').trim(); if (!name) return; const p = readPlans(); p[name] = encodeState(); localStorage.setItem(PLANS_KEY, JSON.stringify(p)); refreshPlanList(); $('planList').value = name; }
+function refreshPlanList() { const sel = $('planList'); const cur = sel.value; const p = readPlans(); const n = Object.keys(p).sort(); sel.innerHTML = '<option value="">Plan laden…</option>' + n.map((x) => `<option>${x}</option>`).join(''); if (n.includes(cur)) sel.value = cur; }
+function savePlan() { const cur = $('planList').value; const name = (window.prompt('Plan speichern als:', cur || '') || '').trim(); if (!name) return; const p = readPlans(); p[name] = encodeState(); localStorage.setItem(PLANS_KEY, JSON.stringify(p)); refreshPlanList(); $('planList').value = name; }
 function loadSelectedPlan() { const n = $('planList').value, p = readPlans(); if (p[n]) { applyDecoded(decodeState(p[n])); renderPicker(); renderSelectedGas(); recompute(); } }
-function deleteSelectedPlan() { const n = $('planList').value, p = readPlans(); delete p[n]; localStorage.setItem(PLANS_KEY, JSON.stringify(p)); refreshPlanList(); }
+function deleteSelectedPlan() { const n = $('planList').value; if (!n) return; const p = readPlans(); delete p[n]; localStorage.setItem(PLANS_KEY, JSON.stringify(p)); refreshPlanList(); }
 
 // --- export PNG / print -----------------------------------------------------
 function exportPng() {
@@ -608,7 +608,7 @@ $('share').addEventListener('click', share);
 $('export').addEventListener('click', exportPng);
 $('print').addEventListener('click', () => window.print());
 $('savePlan').addEventListener('click', savePlan);
-$('loadPlan').addEventListener('click', loadSelectedPlan);
+$('planList').addEventListener('change', loadSelectedPlan);
 $('delPlan').addEventListener('click', deleteSelectedPlan);
 $('invAdd').addEventListener('click', () => { state.inventory.push({ label: '', size_ml: 11100, wp_mbar: 232000, o2_permille: 320, he_permille: 0, roles: ['deco'], count: 1 }); saveGear(); renderInventory(); renderPicker(); });
 $('suggestplan').addEventListener('click', suggestPlanGases);
