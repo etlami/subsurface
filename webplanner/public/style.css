@@ -40,8 +40,9 @@ header .sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
 .share.ghost { background: #fff; color: var(--accent); }
 
 .bestmix { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 13px; }
-.bestmix label { display: inline-flex; align-items: center; gap: 4px; }
-.bestmix input { width: 64px; }
+.bestmix label { display: block; margin-bottom: 6px; }
+.bestmix input[type=number] { width: 64px; }
+.bestmix .add { margin-top: 0; }
 .bestresult { margin-top: 6px; color: #2c7a4b; font-size: 12.5px; min-height: 1em; }
 
 #mingas { font-size: 13px; }
@@ -70,6 +71,19 @@ header .sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
 }
 #view-gear.active, #view-wizard.active { grid-template-columns: 1fr; }
 .panel-wide { width: 100%; }
+
+/* gear page: flow the small setting cards into a responsive multi-column grid
+   instead of one tall full-width stack (keeps inputs from sprawling) */
+aside.gear-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+	gap: 12px;
+	align-items: start;
+}
+.gear-grid fieldset { margin: 0; }
+.gear-grid .row { gap: 10px; }
+.gear-grid .row > input[type=number] { width: 90px; flex: 0 0 90px; }
+.gear-grid .row > select { flex: 0 0 auto; }
 
 /* tab bar in the header */
 .tabs { display: flex; gap: 4px; }
@@ -107,7 +121,12 @@ header .sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
 .wiz-step.active { display: block; }
 .wiz-btns { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 .wiz-step .pick-row { font-size: 14px; }
-@media (max-width: 900px) { .view.active { grid-template-columns: 1fr; } header { flex-wrap: wrap; } .inv-edit { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 900px) {
+	.view.active { grid-template-columns: 1fr; }
+	header { flex-wrap: wrap; }
+	.inv-edit { grid-template-columns: 1fr 1fr; }
+	.inv-edit .del { width: 44px; justify-self: end; }
+}
 
 .profile-pane {
 	background: var(--panel);
