@@ -25,7 +25,15 @@ const defaultState = () => ({
 		ascratelast6m_mmps: 9000 / 60,    // 9 m/min
 		last_stop_6m: 0,                  // 0 = last stop 3 m, 1 = 6 m
 		dobailout: 0,                     // CCR: deco on OC bailout
+		safetystop: 1,                    // auto 3 min @ 5 m on no-deco dives
+		switch_at_req_stop: 0,            // only switch gas at required stops
+		min_switch_duration_s: 60,        // gas/SP switch duration
+		doo2breaks: 0,                    // O2 deco breaks
+		sacfactor: 400,                   // x100 (4.0) for minimum-gas calc
+		problemsolvingtime_min: 4,        // minutes, for minimum-gas calc
+		reserve_gas_mbar: 40000,          // deco-gas reserve (40 bar)
 	},
+	drop_stone: 0,                       // instant descent to the first waypoint
 	ppo2_limit: 1.6,           // deco-gas MOD limit
 	ppo2_working: 1.4,         // working-gas MOD limit (for warnings)
 	end_limit_m: 30,           // narcosis (END) warning threshold
@@ -91,18 +99,25 @@ function setpointMarkers(samples) {
 // Rock-bottom / minimum gas reserve for the back gas (cylinder 0): gas for two
 // divers to solve a problem at the deepest depth and ascend at 9 m/min on a
 // stressed SAC (1.5x). Approximate, for situational awareness.
-function renderMinGas(maxDepth_mm) {
+function renderMinGas(maxDepth_mm, realBar) {
 	const el = $('mingas');
 	if (!el) return;
+	const back = state.cylinders[0];
+	if (realBar > 0) {
+		// Real Subsurface minimum-gas (rock-bottom) for the bottom gas (OC).
+		el.innerHTML = `Min. Gas (Bottom-Gas) = <b>${realBar} bar</b><br>` +
+			`<span class="muted">Subsurface-Formel: SAC-Faktor ${(state.params.sacfactor / 100).toFixed(1)}× · ` +
+			`Problemzeit ${state.params.problemsolvingtime_min} min · Reserve-Gas ${Math.round(state.params.reserve_gas_mbar / 1000)} bar</span>`;
+		return;
+	}
+	// Fallback estimate (CCR / no OC bottom): simple rock-bottom approximation.
 	const d = maxDepth_mm / 1000;
 	const sacReserve = (state.params.bottomsac_mlpm / 1000) * 1.5;
-	const tProblem = 2, ascentRate = 9;
-	const tAscent = d / ascentRate;
-	const reserveL = sacReserve * 2 * ((1 + d / 10) * tProblem + (1 + (d / 2) / 10) * tAscent);
-	const back = state.cylinders[0];
+	const tAscent = d / 9;
+	const reserveL = sacReserve * 2 * ((1 + d / 10) * 2 + (1 + (d / 2) / 10) * tAscent);
 	const volL = back.size_ml / 1000;
 	const bar = volL > 0 ? reserveL / volL : 0;
-	el.innerHTML = `Reserve (Rock-Bottom, 2 Taucher) ≈ <b>${Math.round(reserveL)} L</b> = <b>${Math.round(bar)} bar</b><br><span class="muted">Flasche 0 (${gasName(back)}, ${volL.toFixed(0)} L) · ${sacReserve.toFixed(0)} L/min · Aufstieg 9 m/min</span>`;
+	el.innerHTML = `Reserve (Näherung, 2 Taucher) ≈ <b>${Math.round(bar)} bar</b><br><span class="muted">${gasName(back)}, ${volL.toFixed(0)} L · ${sacReserve.toFixed(0)} L/min · 9 m/min</span>`;
 }
 
 // ppO2 (bar) of a gas at a depth in mm (seawater approx P_abs = 1 + d/10).
@@ -137,9 +152,12 @@ function buildSegments(waypoints) {
 		for (let i = 1; i < cylinders.length; i++) {
 			segs.push({ time_incr_s: 0, depth_mm: modMm(cylinders[i].o2_permille, state.ppo2_limit), cylinderid: i, setpoint_mbar: 0, divemode: 0, entered: true });
 		}
-		let prev = 0;
+		let prev = 0, first = true;
 		for (const w of waypoints) {
-			segs.push({ time_incr_s: Math.max(0, w.time - prev), depth_mm: w.depth, cylinderid: Math.min(w.cyl || 0, cylinders.length - 1), setpoint_mbar: 0, divemode: 0, entered: true });
+			let incr = Math.max(0, w.time - prev);
+			if (state.drop_stone && first) incr = 1; // instant descent
+			first = false;
+			segs.push({ time_incr_s: incr, depth_mm: w.depth, cylinderid: Math.min(w.cyl || 0, cylinders.length - 1), setpoint_mbar: 0, divemode: 0, entered: true });
 			prev = w.time;
 		}
 		return { segments: segs, cylinders };
@@ -175,8 +193,9 @@ function buildSegments(waypoints) {
 	// Entered legs: start on the low setpoint, switch to high once the descent
 	// crosses the switch depth, then keep high (the planner persists it on the
 	// way up; the deco SP above kicks in at its depth during the ascent).
-	let prevT = 0, prevD = 0, sp = state.sp_low_mbar, high = false;
+	let prevT = 0, prevD = 0, sp = state.sp_low_mbar, high = false, first = true;
 	const sw = state.sp_switch_depth_mm;
+	if (state.drop_stone) { sp = state.sp_high_mbar; high = true; } // instant to bottom
 	for (const w of waypoints) {
 		if (!high && prevD < sw && w.depth >= sw && w.time > prevT) {
 			const tc = Math.round(prevT + (w.time - prevT) * (sw - prevD) / (w.depth - prevD));
@@ -184,7 +203,10 @@ function buildSegments(waypoints) {
 			prevT = tc; prevD = sw; sp = state.sp_high_mbar; high = true;
 		}
 		if (w.depth >= sw) { sp = state.sp_high_mbar; high = true; }
-		segs.push({ time_incr_s: Math.max(0, w.time - prevT), depth_mm: w.depth, cylinderid: dilId, setpoint_mbar: sp, divemode: 1, entered: true });
+		let incr = Math.max(0, w.time - prevT);
+		if (state.drop_stone && first) incr = 1;
+		first = false;
+		segs.push({ time_incr_s: incr, depth_mm: w.depth, cylinderid: dilId, setpoint_mbar: sp, divemode: 1, entered: true });
 		prevT = w.time; prevD = w.depth;
 	}
 	return { segments: segs, cylinders };
@@ -259,7 +281,7 @@ function renderResult(res, waypoints) {
 		`Max. Tiefe ${(maxDepth / 1000).toFixed(1)} m · Laufzeit ${(runtime / 60).toFixed(0)} min` +
 		` · <span class="${cnsClass}">CNS ${res.cns}%</span> · OTU ${res.otu}` + sgf + errTxt;
 
-	renderMinGas(maxDepth);
+	renderMinGas(maxDepth, res.min_gas_bar || 0);
 
 	$('stops').innerHTML = stops.length
 		? '<table><tr><th>Tiefe</th><th>Stopp</th></tr>' +
@@ -382,8 +404,8 @@ function bindParams() {
 		el.addEventListener('change', () => { state.params[key] = Math.round((parseFloat(el.value) || 0) * scale); recompute(); });
 	}
 	$('algo').addEventListener('change', () => {
-		state.params.deco_mode = $('algo').value === 'vpmb' ? 1 : 0;
-		document.body.classList.toggle('is-vpmb', state.params.deco_mode === 1);
+		state.params.deco_mode = parseInt($('algo').value, 10) || 0; // 0 Bühlmann, 1 Recreational, 2 VPM-B
+		document.body.classList.toggle('is-vpmb', state.params.deco_mode === 2);
 		recompute();
 	});
 	$('addcyl').addEventListener('click', () => {
@@ -413,6 +435,14 @@ function bindParams() {
 	$('ascrate6m').addEventListener('change', () => { state.params.ascratelast6m_mmps = mpm2mmps($('ascrate6m').value) || state.params.ascratelast6m_mmps; recompute(); });
 	$('laststop').addEventListener('change', () => { state.params.last_stop_6m = $('laststop').checked ? 1 : 0; recompute(); });
 	$('bailout').addEventListener('change', () => { state.params.dobailout = $('bailout').checked ? 1 : 0; recompute(); });
+	$('safetystop').addEventListener('change', () => { state.params.safetystop = $('safetystop').checked ? 1 : 0; recompute(); });
+	$('switchreq').addEventListener('change', () => { state.params.switch_at_req_stop = $('switchreq').checked ? 1 : 0; recompute(); });
+	$('minswitch').addEventListener('change', () => { state.params.min_switch_duration_s = Math.max(0, Math.round(parseFloat($('minswitch').value) || 60)); recompute(); });
+	$('o2breaks').addEventListener('change', () => { state.params.doo2breaks = $('o2breaks').checked ? 1 : 0; recompute(); });
+	$('dropstone').addEventListener('change', () => { state.drop_stone = $('dropstone').checked ? 1 : 0; recompute(); });
+	$('probtime').addEventListener('change', () => { state.params.problemsolvingtime_min = Math.max(0, Math.round(parseFloat($('probtime').value) || 4)); recompute(); });
+	$('reservegas').addEventListener('change', () => { state.params.reserve_gas_mbar = Math.max(0, Math.round((parseFloat($('reservegas').value) || 40) * 1000)); recompute(); });
+	$('calcvar').addEventListener('click', computeVariations);
 	$('bestmix').addEventListener('click', suggestBestMix);
 	$('bestdeco').addEventListener('click', suggestDecoGases);
 	$('export').addEventListener('click', exportPng);
@@ -421,6 +451,36 @@ function bindParams() {
 	$('loadPlan').addEventListener('click', loadSelectedPlan);
 	$('delPlan').addEventListener('click', deleteSelectedPlan);
 	$('delPoint').addEventListener('click', () => editor.deleteSelected());
+}
+
+// --- variations ("what if +5 min / +3 m") -----------------------------------
+function runtimeFor(waypoints) {
+	const built = buildSegments(waypoints);
+	const cv = new Module.CylinderVector(); built.cylinders.forEach((c) => cv.push_back(c));
+	const sv = new Module.SegmentVector(); built.segments.forEach((s) => sv.push_back(s));
+	let rt = 0;
+	try {
+		const r = Module.runPlan(state.params, cv, sv);
+		for (let i = 0; i < r.samples.size(); i++) { const t = r.samples.get(i).time_s; if (t > rt) rt = t; }
+	} finally { cv.delete(); sv.delete(); }
+	return rt;
+}
+const fmtDelta = (sec) => (sec >= 0 ? '+' : '−') + Math.floor(Math.abs(sec) / 60) + ':' + String(Math.round(Math.abs(sec) % 60)).padStart(2, '0') + ' min';
+
+function computeVariations() {
+	const wp = editor.getWaypoints();
+	if (!wp.length) return;
+	const base = runtimeFor(wp);
+	const wpT = wp.map((w) => ({ ...w }));
+	wpT[wpT.length - 1].time += 300; // +5 min bottom
+	const rtT = runtimeFor(wpT);
+	const maxD = Math.max(...wp.map((w) => w.depth));
+	const wpD = wp.map((w) => ({ ...w, depth: w.depth === maxD ? w.depth + 3000 : w.depth }));
+	const rtD = runtimeFor(wpD);
+	$('variations').innerHTML =
+		`Laufzeit ${Math.round(base / 60)} min<br>` +
+		`+5 min Grundzeit → Laufzeit ${fmtDelta(rtT - base)}<br>` +
+		`+3 m Tiefe → Laufzeit ${fmtDelta(rtD - base)}`;
 }
 
 // --- best deco gas suggestion (OC) ------------------------------------------
@@ -500,8 +560,8 @@ function syncInputsFromState() {
 	$('surface').value = state.params.surface_pressure_mbar;
 	$('salinity').value = state.params.salinity;
 	$('vpmb').value = state.params.vpmb_conservatism;
-	$('algo').value = state.params.deco_mode === 1 ? 'vpmb' : 'buehlmann';
-	document.body.classList.toggle('is-vpmb', state.params.deco_mode === 1);
+	$('algo').value = String(state.params.deco_mode);
+	document.body.classList.toggle('is-vpmb', state.params.deco_mode === 2);
 	$('mode').value = state.dive_mode === 1 ? 'ccr' : 'oc';
 	$('spLow').value = (state.sp_low_mbar / 1000).toFixed(1);
 	$('spHigh').value = (state.sp_high_mbar / 1000).toFixed(1);
@@ -515,6 +575,13 @@ function syncInputsFromState() {
 	$('ascrate6m').value = mmps2mpm(state.params.ascratelast6m_mmps);
 	$('laststop').checked = state.params.last_stop_6m === 1;
 	$('bailout').checked = state.params.dobailout === 1;
+	$('safetystop').checked = state.params.safetystop === 1;
+	$('switchreq').checked = state.params.switch_at_req_stop === 1;
+	$('minswitch').value = state.params.min_switch_duration_s;
+	$('o2breaks').checked = state.params.doo2breaks === 1;
+	$('dropstone').checked = state.drop_stone === 1;
+	$('probtime').value = state.params.problemsolvingtime_min;
+	$('reservegas').value = Math.round(state.params.reserve_gas_mbar / 1000);
 	document.body.classList.toggle('is-ccr', state.dive_mode === 1);
 }
 
@@ -528,6 +595,7 @@ function encodeState() {
 		p: state.params,
 		m: state.dive_mode, spl: state.sp_low_mbar, sph: state.sp_high_mbar, spd: state.sp_switch_depth_mm,
 		spdeco: state.sp_deco_mbar, spdd: state.sp_deco_depth_mm, el: state.end_limit_m,
+		ds: state.drop_stone,
 	};
 	return btoa(unescape(encodeURIComponent(JSON.stringify(obj)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
@@ -576,6 +644,7 @@ function applyDecoded(obj) {
 	if (typeof obj.spdeco === 'number') state.sp_deco_mbar = obj.spdeco;
 	if (typeof obj.spdd === 'number') state.sp_deco_depth_mm = obj.spdd;
 	if (typeof obj.el === 'number') state.end_limit_m = obj.el;
+	if (typeof obj.ds === 'number') state.drop_stone = obj.ds;
 	state.cylinders = obj.c.map((a) => ({ o2_permille: a[0], he_permille: a[1], size_ml: a[2], workingpressure_mbar: a[3] }));
 	editor.setWaypoints(obj.w.map((a) => ({ time: a[0], depth: a[1], cyl: a[2] || 0 })), false);
 	return true;

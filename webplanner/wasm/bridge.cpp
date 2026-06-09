@@ -210,6 +210,13 @@ struct JsParams {
 	int ascratelast6m_mmps = 0;
 	int last_stop_6m = 0;       // 1 = last deco stop at 6 m, else 3 m
 	int dobailout = 0;          // 1 = CCR deco on open-circuit bailout
+	int safetystop = 1;         // auto 3 min @ 5 m on no-deco dives
+	int switch_at_req_stop = 0; // only switch gas at required stops
+	int min_switch_duration_s = 0; // gas/SP switch duration (0 = default 60 s)
+	int doo2breaks = 0;         // insert O2 deco breaks
+	int sacfactor = 0;          // x100 (e.g. 400 = 4.0); 0 = keep default
+	int problemsolvingtime_min = 0; // 0 = keep default
+	int reserve_gas_mbar = 0;   // 0 = keep default
 };
 
 // ---- Output value objects (read back, returned to JS) ----------------------
@@ -250,6 +257,7 @@ struct JsResult {
 	int cns = 0;               // CNS % at end of dive
 	int otu = 0;               // OTU (pulmonary O2 toxicity units)
 	int surface_gf = 0;        // peak surfacing gradient factor (%), Buehlmann only
+	int min_gas_bar = 0;       // minimum (rock-bottom) gas for the bottom gas, OC
 	std::vector<JsSample> samples;
 	std::vector<JsDecoStop> stops;
 	std::vector<JsGasUse> gas;
@@ -278,6 +286,13 @@ static JsResult run_plan(const JsParams &params,
 	if (params.ascratelast6m_mmps > 0) prefs.ascratelast6m = params.ascratelast6m_mmps;
 	prefs.last_stop = params.last_stop_6m != 0;
 	prefs.dobailout = params.dobailout != 0;
+	prefs.safetystop = params.safetystop != 0;
+	prefs.switch_at_req_stop = params.switch_at_req_stop != 0;
+	if (params.min_switch_duration_s > 0) prefs.min_switch_duration = params.min_switch_duration_s;
+	prefs.doo2breaks = params.doo2breaks != 0;
+	if (params.sacfactor > 0) prefs.sacfactor = params.sacfactor;
+	if (params.problemsolvingtime_min > 0) prefs.problemsolvingtime = params.problemsolvingtime_min;
+	if (params.reserve_gas_mbar > 0) prefs.reserve_gas = params.reserve_gas_mbar;
 
 	struct dive dive;
 	struct deco_state ds = {};
@@ -395,6 +410,25 @@ static JsResult run_plan(const JsParams &params,
 		}
 	}
 
+	// Minimum (rock-bottom) gas for the bottom gas, OC only. Same formula as
+	// core/plannernotes.cpp: gas for problem-solving time at the bottom plus the
+	// deco gas already used, scaled by the SAC factor, as a cylinder pressure.
+	if (!dive.dcs.empty() && dive.dcs[0].divemode == OC) {
+		int bd = 0, bcyl = 0;
+		for (const JsSegment &s : segments)
+			if (s.entered && s.depth_mm > bd) { bd = s.depth_mm; bcyl = s.cylinderid; }
+		const cylinder_t *cyl = dive.get_cylinder(bcyl);
+		if (bd > 0 && cyl && cyl->type.size.mliter > 0) {
+			depth_t bdepth;
+			bdepth.mm = bd;
+			double sf = prefs.sacfactor / 100.0;
+			double mingasv = sf * prefs.problemsolvingtime * prefs.bottomsac * dive.depth_to_bar(bdepth)
+				       + sf * cyl->deco_gas_used.mliter;
+			double p = isothermal_pressure(cyl->gasmix, 1.0, static_cast<int>(lrint(mingasv)), cyl->type.size.mliter);
+			result.min_gas_bar = static_cast<int>(lrint(p));
+		}
+	}
+
 	return result;
 }
 
@@ -430,7 +464,14 @@ EMSCRIPTEN_BINDINGS(subsurface_planner) {
 		.field("ascrate_mmps", &JsParams::ascrate_mmps)
 		.field("ascratelast6m_mmps", &JsParams::ascratelast6m_mmps)
 		.field("last_stop_6m", &JsParams::last_stop_6m)
-		.field("dobailout", &JsParams::dobailout);
+		.field("dobailout", &JsParams::dobailout)
+		.field("safetystop", &JsParams::safetystop)
+		.field("switch_at_req_stop", &JsParams::switch_at_req_stop)
+		.field("min_switch_duration_s", &JsParams::min_switch_duration_s)
+		.field("doo2breaks", &JsParams::doo2breaks)
+		.field("sacfactor", &JsParams::sacfactor)
+		.field("problemsolvingtime_min", &JsParams::problemsolvingtime_min)
+		.field("reserve_gas_mbar", &JsParams::reserve_gas_mbar);
 
 	value_object<JsSample>("Sample")
 		.field("time_s", &JsSample::time_s)
@@ -464,6 +505,7 @@ EMSCRIPTEN_BINDINGS(subsurface_planner) {
 		.field("cns", &JsResult::cns)
 		.field("otu", &JsResult::otu)
 		.field("surface_gf", &JsResult::surface_gf)
+		.field("min_gas_bar", &JsResult::min_gas_bar)
 		.field("switches", &JsResult::switches)
 		.field("samples", &JsResult::samples)
 		.field("stops", &JsResult::stops)

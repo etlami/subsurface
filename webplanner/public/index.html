@@ -53,8 +53,9 @@
 				<legend>Algorithmus</legend>
 				<label class="row">Modell
 					<select id="algo">
-						<option value="buehlmann">Bühlmann ZH-L16C + GF</option>
-						<option value="vpmb">VPM-B</option>
+						<option value="0">Bühlmann ZH-L16C + GF</option>
+						<option value="1">Recreational (NDL + Sicherheitsstopp)</option>
+						<option value="2">VPM-B</option>
 					</select>
 				</label>
 				<div class="gf-row">
@@ -91,6 +92,21 @@
 				<label class="row">Aufstieg letzte 6 m (m/min)
 					<input id="ascrate6m" type="number" min="1" max="18" value="9"></label>
 				<label class="row check"><input id="laststop" type="checkbox"> Letzter Dekostopp bei 6 m (statt 3 m)</label>
+				<label class="row check"><input id="safetystop" type="checkbox" checked> Sicherheitsstopp (3 min @ 5 m bei Nullzeit)</label>
+				<label class="row check"><input id="dropstone" type="checkbox"> Sofort-Abstieg (Drop Stone)</label>
+			</fieldset>
+
+			<fieldset>
+				<legend>Gaswechsel &amp; Deko-Optionen</legend>
+				<label class="row check"><input id="switchreq" type="checkbox"> Gaswechsel nur an Pflichtstopps</label>
+				<label class="row">Min. Gaswechseldauer (s) <input id="minswitch" type="number" min="0" max="300" value="60"></label>
+				<label class="row check"><input id="o2breaks" type="checkbox"> O₂-Deko-Pausen (air breaks)</label>
+			</fieldset>
+
+			<fieldset>
+				<legend>Variationen</legend>
+				<button id="calcvar" class="add">Berechnen (+5 min / +3 m)</button>
+				<div id="variations" class="muted"></div>
 			</fieldset>
 
 			<fieldset>
@@ -137,6 +153,10 @@
 
 			<fieldset>
 				<legend>Min. Gas / Reserve</legend>
+				<div class="gf-row">
+					<label>Problemlösungszeit (min) <input id="probtime" type="number" min="0" max="30" value="4"></label>
+					<label>Reserve-Gas (bar) <input id="reservegas" type="number" min="0" max="200" value="40"></label>
+				</div>
 				<div id="mingas"></div>
 			</fieldset>
 		</aside>
