@@ -18,9 +18,24 @@ header {
 	padding: 14px 22px;
 	background: var(--panel);
 	border-bottom: 1px solid var(--line);
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
 }
 header h1 { margin: 0; font-size: 20px; }
 header .sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.share {
+	border: 1px solid var(--accent);
+	background: var(--accent);
+	color: #fff;
+	border-radius: 7px;
+	padding: 8px 14px;
+	font: inherit;
+	cursor: pointer;
+	white-space: nowrap;
+}
+.share:hover { filter: brightness(1.05); }
 
 main {
 	display: grid;
@@ -108,3 +123,39 @@ th { color: var(--muted); font-weight: 600; }
 .vpmb-only { display: none; }
 body.is-vpmb .vpmb-only { display: flex; }
 body.is-vpmb .gf-row:has(#gflow) { opacity: .4; }
+
+/* selected-point bar under the profile */
+.selpoint {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-top: 8px;
+	padding: 8px 10px;
+	background: #eef6fb;
+	border: 1px solid #cfe3f1;
+	border-radius: 8px;
+	font-size: 13px;
+}
+.selpoint.hidden { display: none; }
+.sel-label { color: var(--muted); }
+.sel-gas { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+
+/* gas colour dot in the cylinder list */
+.gas-dot {
+	display: inline-block;
+	width: 10px; height: 10px;
+	border-radius: 50%;
+	margin-right: 5px;
+	vertical-align: middle;
+}
+
+/* warnings */
+#warnings .ok { color: #2c7a4b; font-size: 13px; }
+.warn-row {
+	font-size: 12.5px;
+	padding: 4px 8px;
+	border-radius: 6px;
+	margin: 4px 0;
+}
+.warn-row.warn { background: #fff4e0; color: #8a5a00; }
+.warn-row.err { background: #fdecec; color: #b3261e; }
