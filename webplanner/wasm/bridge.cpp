@@ -181,6 +181,13 @@ struct JsGasUse {
 	int deco_gas_used_ml = 0;
 };
 
+struct JsGasSwitch {
+	int time_s = 0;
+	int cylinderid = -1;
+	int o2_permille = 0;
+	int he_permille = 0;
+};
+
 struct JsResult {
 	int error = 0;             // planner_error_t
 	int cns = 0;               // CNS % at end of dive
@@ -188,6 +195,7 @@ struct JsResult {
 	std::vector<JsSample> samples;
 	std::vector<JsDecoStop> stops;
 	std::vector<JsGasUse> gas;
+	std::vector<JsGasSwitch> switches;
 	std::string notes;
 };
 
@@ -261,6 +269,17 @@ static JsResult run_plan(const JsParams &params,
 			js.pressure_mbar = smp.pressure[0].mbar;
 			js.in_deco = smp.in_deco;
 			result.samples.push_back(js);
+		}
+		// Gas-change markers from the computed profile.
+		for (const struct event &ev : dc.events) {
+			if (!ev.is_gaschange())
+				continue;
+			JsGasSwitch g;
+			g.time_s = ev.time.seconds;
+			g.cylinderid = ev.gas.index;
+			g.o2_permille = get_o2(ev.gas.mix);
+			g.he_permille = get_he(ev.gas.mix);
+			result.switches.push_back(g);
 		}
 	}
 
@@ -337,10 +356,17 @@ EMSCRIPTEN_BINDINGS(subsurface_planner) {
 		.field("gas_used_ml", &JsGasUse::gas_used_ml)
 		.field("deco_gas_used_ml", &JsGasUse::deco_gas_used_ml);
 
+	value_object<JsGasSwitch>("GasSwitch")
+		.field("time_s", &JsGasSwitch::time_s)
+		.field("cylinderid", &JsGasSwitch::cylinderid)
+		.field("o2_permille", &JsGasSwitch::o2_permille)
+		.field("he_permille", &JsGasSwitch::he_permille);
+
 	value_object<JsResult>("PlanResult")
 		.field("error", &JsResult::error)
 		.field("cns", &JsResult::cns)
 		.field("otu", &JsResult::otu)
+		.field("switches", &JsResult::switches)
 		.field("samples", &JsResult::samples)
 		.field("stops", &JsResult::stops)
 		.field("gas", &JsResult::gas)
@@ -351,6 +377,7 @@ EMSCRIPTEN_BINDINGS(subsurface_planner) {
 	register_vector<JsSample>("SampleVector");
 	register_vector<JsDecoStop>("DecoStopVector");
 	register_vector<JsGasUse>("GasUseVector");
+	register_vector<JsGasSwitch>("GasSwitchVector");
 
 	function("runPlan", &run_plan);
 }

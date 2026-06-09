@@ -211,6 +211,9 @@ export class ProfileEditor {
 		if (this.computed) {
 			this._drawCeiling();
 			this._drawComputed();
+			this._drawSetpointLine();
+			this._drawDecoStops();
+			this._drawGasSwitches();
 		}
 		this._drawPlan();
 	}
@@ -274,6 +277,67 @@ export class ProfileEditor {
 			ctx.setLineDash([4, 3]);
 			ctx.stroke();
 			ctx.setLineDash([]);
+		}
+	}
+
+	_depthAtTime(timeS) {
+		const s = this.computed && this.computed.samples;
+		if (!s || !s.length) return 0;
+		for (let i = 0; i < s.length; i++) if (s[i].time_s >= timeS) return s[i].depth_mm;
+		return s[s.length - 1].depth_mm;
+	}
+
+	// Constant-depth deco stops, labelled with depth + duration.
+	_drawDecoStops() {
+		const stops = this.computed.stops;
+		if (!stops || !stops.length) return;
+		const ctx = this.ctx;
+		ctx.font = '10px system-ui, sans-serif';
+		ctx.textAlign = 'left';
+		ctx.textBaseline = 'middle';
+		for (const st of stops) {
+			const x = this._x(st.time_s), y = this._y(st.depth_mm);
+			ctx.fillStyle = 'rgba(214,69,65,0.9)';
+			ctx.beginPath(); ctx.arc(x, y, 2.5, 0, Math.PI * 2); ctx.fill();
+			ctx.fillStyle = '#9a3b38';
+			ctx.fillText(`${(st.depth_mm / 1000).toFixed(0)}m ${st.min}′`, x + 5, y);
+		}
+	}
+
+	// CCR setpoint switch depth (horizontal guide line).
+	_drawSetpointLine() {
+		const d = this.computed.setpointDepthMm;
+		if (!d) return;
+		const ctx = this.ctx;
+		const y = this._y(d);
+		ctx.strokeStyle = 'rgba(122,63,176,0.55)';
+		ctx.lineWidth = 1;
+		ctx.setLineDash([2, 4]);
+		ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(this.W - PAD.right, y); ctx.stroke();
+		ctx.setLineDash([]);
+		ctx.fillStyle = '#7a3fb0';
+		ctx.font = '10px system-ui, sans-serif';
+		ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+		ctx.fillText('SP-Wechsel', PAD.left + 4, y - 1);
+	}
+
+	// Gas-change markers on the computed profile.
+	_drawGasSwitches() {
+		const sw = this.computed.switches;
+		if (!sw || !sw.length) return;
+		const ctx = this.ctx;
+		ctx.font = 'bold 10px system-ui, sans-serif';
+		for (const g of sw) {
+			const x = this._x(g.time_s), y = this._y(this._depthAtTime(g.time_s));
+			ctx.strokeStyle = g.color || '#222';
+			ctx.lineWidth = 1.5;
+			ctx.beginPath(); ctx.moveTo(x, y - 9); ctx.lineTo(x, y + 9); ctx.stroke();
+			ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2);
+			ctx.fillStyle = g.color || '#222'; ctx.fill();
+			ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+			ctx.fillStyle = '#222';
+			ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+			ctx.fillText(g.label || '', x + 6, y - 6);
 		}
 	}
 

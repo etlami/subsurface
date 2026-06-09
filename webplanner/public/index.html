@@ -13,7 +13,10 @@
 			<h1>Tauchplaner</h1>
 			<p class="sub">Profil zeichnen — Dekoberechnung läuft live (Subsurface-Kern, WebAssembly)</p>
 		</div>
-		<button id="share" class="share" title="Teilbaren Link in die Zwischenablage kopieren">Teilen</button>
+		<div class="header-actions">
+			<button id="export" class="share ghost" title="Tauchplan als PNG-Bild exportieren">Export PNG</button>
+			<button id="share" class="share" title="Teilbaren Link in die Zwischenablage kopieren">Teilen</button>
+		</div>
 	</header>
 
 	<main>
@@ -51,14 +54,23 @@
 						<option value="ccr">Kreislaufgerät (CCR)</option>
 					</select>
 				</label>
-				<label class="row ccr-only">Setpoint (bar)
-					<input id="setpoint" type="number" min="0.4" max="1.6" step="0.1" value="1.2"></label>
+				<div class="gf-row ccr-only">
+					<label>SP low (bar) <input id="spLow" type="number" min="0.4" max="1.6" step="0.1" value="0.7"></label>
+					<label>SP high (bar) <input id="spHigh" type="number" min="0.4" max="1.6" step="0.1" value="1.2"></label>
+				</div>
+				<label class="row ccr-only">SP-Wechseltiefe (m)
+					<input id="spSwitch" type="number" min="0" max="100" value="21"></label>
 			</fieldset>
 
 			<fieldset>
 				<legend>Gase</legend>
 				<div id="cylinders"></div>
 				<button id="addcyl" class="add">+ Flasche</button>
+				<div class="bestmix">
+					<label>Beste Mischung für <input id="bestdepth" type="number" min="6" max="120" value="50"> m</label>
+					<button id="bestmix" class="add">Berechnen</button>
+					<div id="bestresult" class="bestresult"></div>
+				</div>
 			</fieldset>
 
 			<fieldset>
