@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "webplanner",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8772", "--bind", "127.0.0.1", "--directory", "webplanner/public"],
+      "port": 8772
+    }
+  ]
+}

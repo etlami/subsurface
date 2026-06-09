@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<!-- AI-generated (Claude) -->
+<html lang="de">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Subsurface Web-Tauchplaner</title>
+	<link rel="stylesheet" href="style.css">
+</head>
+<body>
+	<header>
+		<h1>Tauchplaner</h1>
+		<p class="sub">Profil zeichnen — Dekoberechnung läuft live (Subsurface-Kern, WebAssembly)</p>
+	</header>
+
+	<main>
+		<section class="profile-pane">
+			<div class="hint">Klicken zum Setzen · Punkt ziehen zum Verschieben · Doppelklick/Rechtsklick zum Löschen</div>
+			<canvas id="profile"></canvas>
+			<div id="summary" class="summary">…</div>
+		</section>
+
+		<aside class="panel">
+			<fieldset>
+				<legend>Algorithmus</legend>
+				<label class="row">Modell
+					<select id="algo">
+						<option value="buehlmann">Bühlmann ZH-L16C + GF</option>
+						<option value="vpmb">VPM-B</option>
+					</select>
+				</label>
+				<div class="gf-row">
+					<label>GF low <input id="gflow" type="number" min="10" max="100" value="30"></label>
+					<label>GF high <input id="gfhigh" type="number" min="10" max="100" value="75"></label>
+				</div>
+				<label class="row vpmb-only">VPM-B Konservatismus
+					<input id="vpmb" type="number" min="0" max="5" value="3"></label>
+			</fieldset>
+
+			<fieldset>
+				<legend>Gase</legend>
+				<div id="cylinders"></div>
+				<button id="addcyl" class="add">+ Flasche</button>
+			</fieldset>
+
+			<fieldset>
+				<legend>Verbrauch &amp; Umgebung</legend>
+				<div class="gf-row">
+					<label>SAC Grund (L/min) <input id="bottomsac" type="number" min="5" max="40" step="0.5" value="20"></label>
+					<label>SAC Deko (L/min) <input id="decosac" type="number" min="5" max="40" step="0.5" value="17"></label>
+				</div>
+				<div class="gf-row">
+					<label>Oberfläche (mbar) <input id="surface" type="number" min="800" max="1100" value="1013"></label>
+					<label>Salinität (g/10L) <input id="salinity" type="number" min="9000" max="10500" value="10300"></label>
+				</div>
+				<label class="row check"><input id="snap" type="checkbox" checked> Raster (3 m / 1 min)</label>
+			</fieldset>
+
+			<fieldset>
+				<legend>Dekostopps</legend>
+				<div id="stops"></div>
+			</fieldset>
+
+			<fieldset>
+				<legend>Gasverbrauch</legend>
+				<div id="gas"></div>
+			</fieldset>
+		</aside>
+	</main>
+
+	<script type="module" src="app.js"></script>
+</body>
+</html>

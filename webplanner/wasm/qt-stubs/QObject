@@ -1,0 +1,32 @@
+// AI-generated (Claude)
+// Minimal <QObject> stub for the WASM build of the Subsurface planner core.
+// Lets headers that only need Qt's metatype/macro plumbing compile without Qt.
+// Shadows the real header via the include path (angle-bracket lookup only;
+// same-directory "core/*.h" includes are unaffected).
+#ifndef SUBSURFACE_WASM_QOBJECT_STUB
+#define SUBSURFACE_WASM_QOBJECT_STUB
+
+#define Q_DECLARE_METATYPE(x)
+#define Q_OBJECT
+#define Q_GADGET
+#define Q_PROPERTY(...)
+#define Q_ENUM(...)
+#define Q_INVOKABLE
+#define Q_SIGNALS public
+#define Q_SLOTS
+#define signals public
+#define slots
+#define emit
+#define Q_EMIT
+#define Q_DECLARE_FLAGS(...)
+#define Q_DECLARE_OPERATORS_FOR_FLAGS(...)
+
+// Qt translation no-ops: keep the literal source string.
+#ifndef QT_TRANSLATE_NOOP
+#define QT_TRANSLATE_NOOP(ctx, s) (s)
+#endif
+#ifndef QT_TR_NOOP
+#define QT_TR_NOOP(s) (s)
+#endif
+
+#endif
