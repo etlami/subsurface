@@ -28,7 +28,10 @@
 	<main id="view-plan" class="view active">
 		<div class="plan-main">
 			<section class="profile-pane">
-				<div class="hint">Klicken zum Setzen · Punkt ziehen zum Verschieben · Doppelklick/Rechtsklick zum Löschen</div>
+				<div class="profile-head">
+					<span class="hint">Klicken zum Setzen · Punkt ziehen zum Verschieben · Doppelklick/Rechtsklick zum Löschen</span>
+					<label class="snap-toggle"><input id="snap" type="checkbox" checked> Raster (1 m / 1 min)</label>
+				</div>
 				<canvas id="profile"></canvas>
 				<div id="summary" class="summary">…</div>
 				<div id="selpoint" class="selpoint hidden">
@@ -70,7 +73,6 @@
 					</select>
 				</label>
 				<label class="row check ccr-only"><input id="bailout" type="checkbox"> Deko auf OC-Bailout (statt Loop)</label>
-				<label class="row check"><input id="snap" type="checkbox" checked> Raster (1 m / 1 min)</label>
 			</fieldset>
 
 			<fieldset>
