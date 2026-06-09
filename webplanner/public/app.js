@@ -214,6 +214,7 @@ function buildSegments(waypoints) {
 
 let v_track = [];
 let lastDecoStops = []; // [{depth(m), time(min)}] of the last computed plan
+let lastMaxDepthM = 0, lastDecoMin = 0;
 function toVec(Vec, arr) { const v = new Vec(); arr.forEach((x) => v.push_back(x)); v_track.push(v); return v; }
 function freeVecs() { v_track.forEach((v) => v.delete()); v_track = []; }
 
@@ -262,6 +263,8 @@ function renderResult(res, waypoints) {
 		if (st.time_s > 0) stops.push({ depth: st.depth_mm / 1000, time: Math.round(st.time_s / 60) });
 	}
 	lastDecoStops = stops;
+	lastMaxDepthM = maxDepth / 1000;
+	lastDecoMin = stops.reduce((a, s) => a + s.time, 0);
 
 	const gasNames = state.cylinders.map(gasName);
 	const gases = [];
@@ -445,6 +448,7 @@ function bindParams() {
 	$('calcvar').addEventListener('click', computeVariations);
 	$('bestmix').addEventListener('click', suggestBestMix);
 	$('bestdeco').addEventListener('click', suggestDecoGases);
+	$('suggestplan').addEventListener('click', suggestPlanGases);
 	$('export').addEventListener('click', exportPng);
 	$('print').addEventListener('click', () => window.print());
 	$('savePlan').addEventListener('click', savePlan);
@@ -481,6 +485,101 @@ function computeVariations() {
 		`Laufzeit ${Math.round(base / 60)} min<br>` +
 		`+5 min Grundzeit → Laufzeit ${fmtDelta(rtT - base)}<br>` +
 		`+3 m Tiefe → Laufzeit ${fmtDelta(rtD - base)}`;
+}
+
+// --- full gas + cylinder-size suggestion from the plan ----------------------
+// Gas tables: OC back gas from indepthmag.com; CCR diluent/bailout/setpoints
+// from R. Zbinden's "Gaswahl und Setpoint für CCR" (dekostop.ch).
+const mix = (o2, he) => ({ o2_permille: o2, he_permille: he });
+function ocBottomGas(D) {
+	if (D <= 30) return mix(320, 0);      // NX32
+	if (D <= 45) return mix(210, 350);    // Tx 21/35
+	if (D <= 60) return mix(180, 450);    // Tx 18/45
+	if (D <= 75) return mix(150, 550);    // Tx 15/55
+	return mix(120, 650);                 // Tx 12/65
+}
+function ocDecoSet(D) {
+	const s = [];
+	if (D > 65) s.push(mix(210, 350));    // Tx 21/35 travel
+	if (D > 50) s.push(mix(350, 250));    // Tx 35/25
+	s.push(mix(500, 0));                  // EAN50
+	s.push(mix(1000, 0));                 // O2
+	return s;
+}
+function ccrDiluent(D) {
+	if (D <= 30) return mix(210, 0);      // Air
+	if (D <= 50) return mix(180, 450);    // Tx 18/45
+	if (D <= 65) return mix(150, 550);    // Tx 15/55
+	if (D <= 100) return mix(100, 700);   // Tx 10/70
+	return mix(70, 750);                  // Tx 7/75
+}
+function ccrBailoutLadder(D) {           // OC bailout gases above the bottom gas, per band
+	if (D <= 30) return [];                                              // air only
+	if (D <= 50) return [mix(500, 150), mix(1000, 0)];                   // Tx50/15, O2
+	if (D <= 65) return [mix(350, 250), mix(500, 150), mix(1000, 0)];    // +Tx35/25
+	if (D <= 100) return [mix(180, 450), mix(210, 350), mix(350, 250), mix(500, 150), mix(1000, 0)]; // +Tx18/45,Tx21/35
+	return [mix(150, 550), mix(180, 450), mix(210, 350), mix(350, 250), mix(500, 150), mix(1000, 0)];
+}
+function ccrSetpoints(D, decoMin) {
+	let bottom = 1300;
+	if (D < 25) bottom = 700;
+	else if (decoMin >= 110) bottom = 1000;
+	else if (decoMin >= 90) bottom = 1100;
+	else if (decoMin >= 60) bottom = 1200;
+	return { low: 700, bottom, deco: 1300 };
+}
+
+const STD_SIZES_ML = [3000, 5700, 7000, 10000, 11100, 12000, 15000, 18000, 20000, 24000, 30000];
+function pickSizeMl(used_ml, wp_mbar, usableFrac, minMl) {
+	const needL = (used_ml / 1000) / (wp_mbar / 1000 * usableFrac);
+	for (const s of STD_SIZES_ML) if (s / 1000 >= needL && s >= (minMl || 0)) return s;
+	return STD_SIZES_ML[STD_SIZES_ML.length - 1];
+}
+function planGasUsed(waypoints) {
+	const built = buildSegments(waypoints);
+	const cv = new Module.CylinderVector(); built.cylinders.forEach((c) => cv.push_back(c));
+	const sv = new Module.SegmentVector(); built.segments.forEach((s) => sv.push_back(s));
+	const used = {}; let decoMin = 0;
+	try {
+		const r = Module.runPlan(state.params, cv, sv);
+		for (let i = 0; i < r.gas.size(); i++) { const g = r.gas.get(i); used[g.cylinderid] = g.gas_used_ml; }
+		for (let i = 0; i < r.stops.size(); i++) { const st = r.stops.get(i); decoMin += Math.round(st.time_s / 60); }
+	} finally { cv.delete(); sv.delete(); }
+	return { used, decoMin };
+}
+
+function suggestPlanGases() {
+	const wp = editor.getWaypoints();
+	const D = wp.length ? Math.max(...wp.map((w) => w.depth)) / 1000 : 0;
+	const WP = 232000;
+	const el = $('bestresult');
+	if (!D) { el.textContent = 'Erst ein Profil zeichnen.'; return; }
+	const decoMin = planGasUsed(wp).decoMin; // deco time of the current plan
+	if (state.dive_mode === 1) {
+		// CCR: diluent on the loop + OC bailout ladder; setpoints by depth/deco.
+		state.cylinders = [{ ...ccrDiluent(D), size_ml: 3000, workingpressure_mbar: WP },
+			...ccrBailoutLadder(D).map((g) => ({ ...g, size_ml: 11100, workingpressure_mbar: WP }))];
+		const sp = ccrSetpoints(D, decoMin);
+		state.sp_low_mbar = sp.low; state.sp_high_mbar = sp.bottom; state.sp_deco_mbar = sp.deco;
+		state.sp_switch_depth_mm = 21000; state.sp_deco_depth_mm = 21000;
+		// Size from an OC-bailout run (the synthetic bottom-bailout = diluent mix
+		// carries the deep ascent; index = state.cylinders.length).
+		const prev = state.params.dobailout; state.params.dobailout = 1;
+		const { used } = planGasUsed(editor.getWaypoints());
+		state.params.dobailout = prev;
+		const dilId = state.cylinders.length;
+		state.cylinders[0].size_ml = pickSizeMl(used[dilId] || 0, WP, 2 / 3, 5700); // diluent = bottom bailout
+		for (let i = 1; i < state.cylinders.length; i++) state.cylinders[i].size_ml = pickSizeMl(used[i] || 0, WP, 0.75, 5700);
+	} else {
+		// OC: back gas + standard deco gases.
+		state.cylinders = [{ ...ocBottomGas(D), size_ml: 24000, workingpressure_mbar: WP },
+			...(decoMin > 0 ? ocDecoSet(D) : []).map((g) => ({ ...g, size_ml: 11100, workingpressure_mbar: WP }))];
+		const { used } = planGasUsed(editor.getWaypoints());
+		state.cylinders.forEach((c, i) => { c.size_ml = pickSizeMl(used[i] || 0, WP, i === 0 ? 2 / 3 : 0.75, i === 0 ? 7000 : 5700); });
+	}
+	renderCylinders(); refreshGasColors(); syncInputsFromState(); recompute();
+	el.innerHTML = `→ ${state.dive_mode === 1 ? 'CCR' : 'OC'} für ${D.toFixed(0)} m / ${decoMin} min Deko:<br>` +
+		state.cylinders.map((c, i) => `${i}: <b>${gasName(c)}</b> ${(c.size_ml / 1000).toFixed(1)} L`).join(' · ');
 }
 
 // --- best deco gas suggestion (OC) ------------------------------------------
