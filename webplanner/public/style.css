@@ -170,6 +170,19 @@ body.is-ccr .ccr-only { display: flex; }
 .selpoint.hidden { display: none; }
 .sel-label { color: var(--muted); }
 .sel-gas { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.del-point { border: 1px solid #d9b3b3; background: #fff; color: #b33; border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+
+/* saved plans */
+.plans { display: flex; gap: 6px; margin: 4px 0; }
+.plans input, .plans select { flex: 1; min-width: 0; }
+.plans .add { margin-top: 0; white-space: nowrap; }
+
+/* touch: larger tap targets on phones/tablets */
+@media (pointer: coarse) {
+	#profile { height: 52vh; }
+	input, select, button { min-height: 40px; }
+	.cyl-row input { min-height: 34px; }
+}
 
 /* gas colour dot in the cylinder list */
 .gas-dot {

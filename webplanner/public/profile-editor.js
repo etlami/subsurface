@@ -38,6 +38,8 @@ export class ProfileEditor {
 		this.maxDepth = 40000;
 		this.dragIdx = -1;
 		this.snap = true;
+		// Bigger touch target on coarse pointers (phones/tablets).
+		this.hitPad = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ? 16 : 4;
 
 		this._bind();
 		this.resize();
@@ -93,6 +95,15 @@ export class ProfileEditor {
 		this._changed();
 	}
 
+	// Delete the currently selected waypoint (used by the touch-friendly button).
+	deleteSelected() {
+		if (this.selectedIdx < 0 || this.waypoints.length <= 1) return;
+		this.waypoints.splice(this.selectedIdx, 1);
+		this.selectedIdx = -1;
+		this.onSelect?.(null);
+		this._changed();
+	}
+
 	// --- coordinate transforms -------------------------------------------------
 	_plotW() { return this.W - PAD.left - PAD.right; }
 	_plotH() { return this.H - PAD.top - PAD.bottom; }
@@ -121,7 +132,7 @@ export class ProfileEditor {
 	_hitHandle(pos) {
 		for (let i = 0; i < this.waypoints.length; i++) {
 			const hx = this._x(this.waypoints[i].time), hy = this._y(this.waypoints[i].depth);
-			if (Math.hypot(pos.x - hx, pos.y - hy) <= HANDLE_R + 4) return i;
+			if (Math.hypot(pos.x - hx, pos.y - hy) <= HANDLE_R + this.hitPad) return i;
 		}
 		return -1;
 	}
