@@ -14,6 +14,7 @@
 			<p class="sub">Profil zeichnen — Dekoberechnung läuft live (Subsurface-Kern, WebAssembly)</p>
 		</div>
 		<div class="header-actions">
+			<button id="print" class="share ghost" title="Druckansicht / als PDF speichern">Drucken / PDF</button>
 			<button id="export" class="share ghost" title="Tauchplan als PNG-Bild exportieren">Export PNG</button>
 			<button id="share" class="share" title="Teilbaren Link in die Zwischenablage kopieren">Teilen</button>
 		</div>
@@ -101,6 +102,11 @@
 			<fieldset>
 				<legend>Gasverbrauch</legend>
 				<div id="gas"></div>
+			</fieldset>
+
+			<fieldset>
+				<legend>Min. Gas / Reserve</legend>
+				<div id="mingas"></div>
 			</fieldset>
 		</aside>
 	</main>

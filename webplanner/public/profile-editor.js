@@ -213,6 +213,7 @@ export class ProfileEditor {
 			this._drawComputed();
 			this._drawSetpointLine();
 			this._drawDecoStops();
+			this._drawSetpointMarkers();
 			this._drawGasSwitches();
 		}
 		this._drawPlan();
@@ -319,6 +320,22 @@ export class ProfileEditor {
 		ctx.font = '10px system-ui, sans-serif';
 		ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
 		ctx.fillText('SP-Wechsel', PAD.left + 4, y - 1);
+	}
+
+	// CCR setpoint-change markers where the profile crosses the switch depth.
+	_drawSetpointMarkers() {
+		const sp = this.computed.spMarkers;
+		if (!sp || !sp.length) return;
+		const ctx = this.ctx;
+		ctx.font = 'bold 10px system-ui, sans-serif';
+		for (const m of sp) {
+			const x = this._x(m.time_s), y = this._y(m.depth_mm);
+			ctx.beginPath(); ctx.moveTo(x, y - 8); ctx.lineTo(x, y + 8); ctx.strokeStyle = '#7a3fb0'; ctx.lineWidth = 1.5; ctx.stroke();
+			ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fillStyle = '#7a3fb0'; ctx.fill();
+			ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+			ctx.fillStyle = '#5a2d86'; ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
+			ctx.fillText(m.label, x - 6, y - 4);
+		}
 	}
 
 	// Gas-change markers on the computed profile.

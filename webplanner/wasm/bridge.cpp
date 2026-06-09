@@ -24,6 +24,7 @@
 #include "core/gas.h"
 #include "core/sample.h"
 #include "core/range.h"
+#include "core/interpolate.h"
 #include "core/units.h"
 
 using namespace emscripten;
@@ -128,6 +129,49 @@ static double ss_calculate_cns_dive(const struct dive &dive)
 	return cns;
 }
 
+// Peak "surface GF": for each sample, the gradient factor your tissues would be
+// at if you surfaced from there. Subsurface shows this once a dive incurs deco.
+// Re-walks the planned samples through a fresh Buehlmann deco state (the plan()
+// state is consumed) and applies the surface-GF formula from
+// core/profile.cpp::calculate_deco_information (the per-tissue max).
+static double ss_max_surface_gf(const struct dive &dive, short gflow, short gfhigh,
+				double surface_pressure_bar, bool in_planner)
+{
+	const struct divecomputer &dc = dive.dcs[0];
+	if (dc.samples.size() < 2)
+		return 0.0;
+	struct deco_state ds = {};
+	set_gf(gflow, gfhigh);
+	clear_deco(&ds, surface_pressure_bar, in_planner);
+	gasmix_loop loop_gas(dive, dc);
+	divemode_loop loop_mode(dc);
+	double maxgf = 0.0;
+	for (auto [psample, sample] : pairwise_range(dc.samples)) {
+		int t0 = psample.time.seconds, t1 = sample.time.seconds;
+		if (t1 <= t0)
+			continue;
+		[[maybe_unused]] auto [dm, _ci, gas] = get_dive_status_at(dive, dc, t1, &loop_mode, &loop_gas);
+		if (!gas)
+			continue;
+		int step = (t1 - t0 < 20) ? (t1 - t0) : 20;
+		for (int j = t0 + step; j <= t1; j += step) {
+			depth_t nd = interpolate(psample.depth, sample.depth, j - t0, t1 - t0);
+			add_segment(&ds, dive.depth_to_bar(nd), *gas, step, sample.setpoint.mbar, dm, 0, in_planner);
+			if ((t1 - j < step) && (j < t1))
+				step = t1 - j;
+		}
+		double amb = dive.depth_to_bar(sample.depth);
+		tissue_tolerance_calc(&ds, &dive, amb, in_planner);
+		for (int k = 0; k < 16; k++) {
+			double sm = ds.buehlmann_inertgas_a[k] + surface_pressure_bar / ds.buehlmann_inertgas_b[k];
+			double sgf = 100.0 * (ds.tissue_inertgas_saturation[k] - surface_pressure_bar) / (sm - surface_pressure_bar);
+			if (sgf > maxgf)
+				maxgf = sgf;
+		}
+	}
+	return maxgf;
+}
+
 // ---- Input value objects (plain data, populated from JS) -------------------
 
 struct JsCylinder {
@@ -192,6 +236,7 @@ struct JsResult {
 	int error = 0;             // planner_error_t
 	int cns = 0;               // CNS % at end of dive
 	int otu = 0;               // OTU (pulmonary O2 toxicity units)
+	int surface_gf = 0;        // peak surfacing gradient factor (%), Buehlmann only
 	std::vector<JsSample> samples;
 	std::vector<JsDecoStop> stops;
 	std::vector<JsGasUse> gas;
@@ -305,6 +350,11 @@ static JsResult run_plan(const JsParams &params,
 	if (!dive.dcs.empty() && dive.dcs[0].samples.size() > 1) {
 		result.cns = static_cast<int>(lrint(ss_calculate_cns_dive(dive)));
 		result.otu = ss_calculate_otu(dive);
+		// Surface GF is a Buehlmann concept; only meaningful in that mode.
+		if (prefs.planner_deco_mode == BUEHLMANN)
+			result.surface_gf = static_cast<int>(lrint(ss_max_surface_gf(
+				dive, diveplan.gflow, diveplan.gfhigh,
+				params.surface_pressure_mbar / 1000.0, true)));
 	}
 
 	return result;
@@ -366,6 +416,7 @@ EMSCRIPTEN_BINDINGS(subsurface_planner) {
 		.field("error", &JsResult::error)
 		.field("cns", &JsResult::cns)
 		.field("otu", &JsResult::otu)
+		.field("surface_gf", &JsResult::surface_gf)
 		.field("switches", &JsResult::switches)
 		.field("samples", &JsResult::samples)
 		.field("stops", &JsResult::stops)
