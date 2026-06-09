@@ -164,7 +164,7 @@ function renderResult(res, waypoints) {
 	const samples = [];
 	for (let i = 0; i < res.samples.size(); i++) {
 		const s = res.samples.get(i);
-		samples.push({ time_s: s.time_s, depth_mm: s.depth_mm, stopdepth_mm: s.stopdepth_mm, in_deco: s.in_deco });
+		samples.push({ time_s: s.time_s, depth_mm: s.depth_mm, stopdepth_mm: s.stopdepth_mm, ceiling_mm: s.ceiling_mm, in_deco: s.in_deco });
 	}
 	const switches = [];
 	for (let i = 0; i < res.switches.size(); i++) {
