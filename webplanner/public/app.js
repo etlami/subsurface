@@ -50,7 +50,7 @@ function defaultSettings() {
 		surface_pressure_mbar: 1013, salinity: 10300, gflow: 30, gfhigh: 75, vpmb_conservatism: 3,
 		deco_mode: 0, bottomsac_mlpm: 20000, decosac_mlpm: 17000,
 		descrate_mmps: 18000 / 60, ascrate_mmps: 9000 / 60, ascratelast6m_mmps: 9000 / 60,
-		last_stop_6m: 0, safetystop: 1, switch_at_req_stop: 0, min_switch_duration_s: 60, doo2breaks: 0,
+		last_stop_6m: 0, safetystop: 1, switch_at_req_stop: 1, min_switch_duration_s: 60, doo2breaks: 0,
 		sacfactor: 400, problemsolvingtime_min: 4, reserve_gas_mbar: 40000,
 		ppo2_limit: 1.6, ppo2_working: 1.4, end_limit_m: 30, drop_stone: 0,
 		sp_low_mbar: 700, sp_high_mbar: 1300, sp_switch_depth_mm: 21000, sp_deco_mbar: 1600, sp_deco_depth_mm: 6000,
