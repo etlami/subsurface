@@ -79,6 +79,18 @@
 					<label>Deko-SP (bar) <input id="spDeco" type="number" min="0.4" max="1.6" step="0.1" value="1.6"></label>
 					<label>Deko-SP ab Tiefe (m) <input id="spDecoDepth" type="number" min="0" max="30" value="6"></label>
 				</div>
+				<label class="row check ccr-only"><input id="bailout" type="checkbox"> Deko auf OC-Bailout (statt Loop)</label>
+			</fieldset>
+
+			<fieldset>
+				<legend>Geschwindigkeiten &amp; Stopps</legend>
+				<div class="gf-row">
+					<label>Abstieg (m/min) <input id="descrate" type="number" min="3" max="60" value="18"></label>
+					<label>Aufstieg (m/min) <input id="ascrate" type="number" min="1" max="18" value="9"></label>
+				</div>
+				<label class="row">Aufstieg letzte 6 m (m/min)
+					<input id="ascrate6m" type="number" min="1" max="18" value="9"></label>
+				<label class="row check"><input id="laststop" type="checkbox"> Letzter Dekostopp bei 6 m (statt 3 m)</label>
 			</fieldset>
 
 			<fieldset>

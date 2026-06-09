@@ -204,6 +204,12 @@ struct JsParams {
 	int deco_mode = 0;         // 0 = BUEHLMANN, 1 = VPMB (enum deco_mode)
 	int bottomsac_mlpm = 20000;
 	int decosac_mlpm = 17000;
+	// Rates in mm/s (0 = keep default). last_stop_6m / dobailout are 0/1.
+	int descrate_mmps = 0;
+	int ascrate_mmps = 0;       // applied to ascrate50/75/stops
+	int ascratelast6m_mmps = 0;
+	int last_stop_6m = 0;       // 1 = last deco stop at 6 m, else 3 m
+	int dobailout = 0;          // 1 = CCR deco on open-circuit bailout
 };
 
 // ---- Output value objects (read back, returned to JS) ----------------------
@@ -265,6 +271,13 @@ static JsResult run_plan(const JsParams &params,
 	prefs.bottomsac = params.bottomsac_mlpm;
 	prefs.decosac = params.decosac_mlpm;
 	prefs.vpmb_conservatism = params.vpmb_conservatism;
+	if (params.descrate_mmps > 0) prefs.descrate = params.descrate_mmps;
+	if (params.ascrate_mmps > 0) {
+		prefs.ascrate50 = prefs.ascrate75 = prefs.ascratestops = params.ascrate_mmps;
+	}
+	if (params.ascratelast6m_mmps > 0) prefs.ascratelast6m = params.ascratelast6m_mmps;
+	prefs.last_stop = params.last_stop_6m != 0;
+	prefs.dobailout = params.dobailout != 0;
 
 	struct dive dive;
 	struct deco_state ds = {};
@@ -412,7 +425,12 @@ EMSCRIPTEN_BINDINGS(subsurface_planner) {
 		.field("vpmb_conservatism", &JsParams::vpmb_conservatism)
 		.field("deco_mode", &JsParams::deco_mode)
 		.field("bottomsac_mlpm", &JsParams::bottomsac_mlpm)
-		.field("decosac_mlpm", &JsParams::decosac_mlpm);
+		.field("decosac_mlpm", &JsParams::decosac_mlpm)
+		.field("descrate_mmps", &JsParams::descrate_mmps)
+		.field("ascrate_mmps", &JsParams::ascrate_mmps)
+		.field("ascratelast6m_mmps", &JsParams::ascratelast6m_mmps)
+		.field("last_stop_6m", &JsParams::last_stop_6m)
+		.field("dobailout", &JsParams::dobailout);
 
 	value_object<JsSample>("Sample")
 		.field("time_s", &JsSample::time_s)

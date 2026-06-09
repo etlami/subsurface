@@ -20,6 +20,11 @@ const defaultState = () => ({
 		deco_mode: 0,          // 0 = Bühlmann, 1 = VPM-B
 		bottomsac_mlpm: 20000,
 		decosac_mlpm: 17000,
+		descrate_mmps: 18000 / 60,        // 18 m/min
+		ascrate_mmps: 9000 / 60,          // 9 m/min
+		ascratelast6m_mmps: 9000 / 60,    // 9 m/min
+		last_stop_6m: 0,                  // 0 = last stop 3 m, 1 = 6 m
+		dobailout: 0,                     // CCR: deco on OC bailout
 	},
 	ppo2_limit: 1.6,           // deco-gas MOD limit
 	ppo2_working: 1.4,         // working-gas MOD limit (for warnings)
@@ -123,7 +128,7 @@ function buildSegments(waypoints) {
 	const cylinders = state.cylinders.map((c) => ({
 		o2_permille: c.o2_permille, he_permille: c.he_permille, size_ml: c.size_ml,
 		workingpressure_mbar: c.workingpressure_mbar,
-		cylinder_use: ccr ? DILUENT : OC_GAS, description: '',
+		cylinder_use: OC_GAS, description: '',
 	}));
 	const segs = [];
 
@@ -140,13 +145,31 @@ function buildSegments(waypoints) {
 		return { segments: segs, cylinders };
 	}
 
-	// CCR: register a deco setpoint change as an "SP x.x" diluent cylinder at its
-	// depth; the planner switches the loop setpoint there on ascent.
-	const dilId = Math.min(/* diluent = first cylinder */ 0, cylinders.length - 1);
-	if (state.sp_deco_mbar > 0) {
+	// CCR: cylinder 0 is the diluent (breathed on the loop).
+	const dilId = 0;
+	const bailout = state.params.dobailout === 1;
+	cylinders[dilId].cylinder_use = DILUENT;
+	if (bailout) {
+		// Deco on open-circuit bailout: the other cylinders are OC bailout gases,
+		// registered at their MOD so the planner switches to them on the ascent.
+		for (let i = 1; i < cylinders.length; i++) {
+			cylinders[i].cylinder_use = OC_GAS;
+			segs.push({ time_incr_s: 0, depth_mm: modMm(cylinders[i].o2_permille, state.ppo2_limit), cylinderid: i, setpoint_mbar: 0, divemode: 0, entered: true });
+		}
+		// The planner needs an OC bottom bailout gas breathable at depth. Provide
+		// one with the diluent's mix (you bail out to OC on your diluent).
 		const dil = cylinders[dilId];
-		cylinders.push({ o2_permille: dil.o2_permille, he_permille: dil.he_permille, size_ml: dil.size_ml, workingpressure_mbar: dil.workingpressure_mbar, cylinder_use: DILUENT, description: `SP ${(state.sp_deco_mbar / 1000).toFixed(1)}` });
-		segs.push({ time_incr_s: 0, depth_mm: state.sp_deco_depth_mm, cylinderid: cylinders.length - 1, setpoint_mbar: 0, divemode: 1, entered: true });
+		cylinders.push({ o2_permille: dil.o2_permille, he_permille: dil.he_permille, size_ml: dil.size_ml, workingpressure_mbar: dil.workingpressure_mbar, cylinder_use: OC_GAS, description: '' });
+		segs.push({ time_incr_s: 0, depth_mm: modMm(dil.o2_permille, state.ppo2_limit), cylinderid: cylinders.length - 1, setpoint_mbar: 0, divemode: 0, entered: true });
+	} else {
+		// Deco on the loop: register a deco setpoint change as an "SP x.x" diluent
+		// cylinder at its depth (the planner switches the loop setpoint there).
+		for (let i = 1; i < cylinders.length; i++) cylinders[i].cylinder_use = DILUENT;
+		if (state.sp_deco_mbar > 0) {
+			const dil = cylinders[dilId];
+			cylinders.push({ o2_permille: dil.o2_permille, he_permille: dil.he_permille, size_ml: dil.size_ml, workingpressure_mbar: dil.workingpressure_mbar, cylinder_use: DILUENT, description: `SP ${(state.sp_deco_mbar / 1000).toFixed(1)}` });
+			segs.push({ time_incr_s: 0, depth_mm: state.sp_deco_depth_mm, cylinderid: cylinders.length - 1, setpoint_mbar: 0, divemode: 1, entered: true });
+		}
 	}
 
 	// Entered legs: start on the low setpoint, switch to high once the descent
@@ -384,6 +407,12 @@ function bindParams() {
 	$('spDeco').addEventListener('change', () => { state.sp_deco_mbar = Math.round((parseFloat($('spDeco').value) || 1.6) * 1000); recompute(); });
 	$('spDecoDepth').addEventListener('change', () => { state.sp_deco_depth_mm = Math.round((parseFloat($('spDecoDepth').value) || 6) * 1000); recompute(); });
 	$('endlimit').addEventListener('change', () => { state.end_limit_m = Math.round(parseFloat($('endlimit').value) || 30); recompute(); });
+	const mpm2mmps = (v) => Math.round((parseFloat(v) || 0) * 1000 / 60);
+	$('descrate').addEventListener('change', () => { state.params.descrate_mmps = mpm2mmps($('descrate').value) || state.params.descrate_mmps; recompute(); });
+	$('ascrate').addEventListener('change', () => { state.params.ascrate_mmps = mpm2mmps($('ascrate').value) || state.params.ascrate_mmps; recompute(); });
+	$('ascrate6m').addEventListener('change', () => { state.params.ascratelast6m_mmps = mpm2mmps($('ascrate6m').value) || state.params.ascratelast6m_mmps; recompute(); });
+	$('laststop').addEventListener('change', () => { state.params.last_stop_6m = $('laststop').checked ? 1 : 0; recompute(); });
+	$('bailout').addEventListener('change', () => { state.params.dobailout = $('bailout').checked ? 1 : 0; recompute(); });
 	$('bestmix').addEventListener('click', suggestBestMix);
 	$('bestdeco').addEventListener('click', suggestDecoGases);
 	$('export').addEventListener('click', exportPng);
@@ -480,6 +509,12 @@ function syncInputsFromState() {
 	$('spDeco').value = (state.sp_deco_mbar / 1000).toFixed(1);
 	$('spDecoDepth').value = (state.sp_deco_depth_mm / 1000).toFixed(0);
 	$('endlimit').value = state.end_limit_m;
+	const mmps2mpm = (v) => Math.round(v * 60 / 1000);
+	$('descrate').value = mmps2mpm(state.params.descrate_mmps);
+	$('ascrate').value = mmps2mpm(state.params.ascrate_mmps);
+	$('ascrate6m').value = mmps2mpm(state.params.ascratelast6m_mmps);
+	$('laststop').checked = state.params.last_stop_6m === 1;
+	$('bailout').checked = state.params.dobailout === 1;
 	document.body.classList.toggle('is-ccr', state.dive_mode === 1);
 }
 
