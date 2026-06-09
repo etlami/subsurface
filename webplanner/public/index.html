@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-<!-- AI-generated (Claude) -->
 <html lang="de">
 <head>
 	<meta charset="utf-8">
@@ -11,8 +10,13 @@
 	<header>
 		<div>
 			<h1>Tauchplaner</h1>
-			<p class="sub">Profil zeichnen — Dekoberechnung läuft live (Subsurface-Kern, WebAssembly)</p>
+			<p class="sub">Subsurface-Dekokern · WebAssembly</p>
 		</div>
+		<nav class="tabs">
+			<button class="tab-btn active" data-tab="plan">Planung</button>
+			<button class="tab-btn" data-tab="gear">Ausrüstung</button>
+			<button class="tab-btn" data-tab="wizard">Assistent</button>
+		</nav>
 		<div class="header-actions">
 			<button id="print" class="share ghost" title="Druckansicht / als PDF speichern">Drucken / PDF</button>
 			<button id="export" class="share ghost" title="Tauchplan als PNG-Bild exportieren">Export PNG</button>
@@ -20,7 +24,8 @@
 		</div>
 	</header>
 
-	<main>
+	<!-- ============================ PLANUNG ============================ -->
+	<main id="view-plan" class="view active">
 		<section class="profile-pane">
 			<div class="hint">Klicken zum Setzen · Punkt ziehen zum Verschieben · Doppelklick/Rechtsklick zum Löschen</div>
 			<canvas id="profile"></canvas>
@@ -28,27 +33,71 @@
 			<div id="selpoint" class="selpoint hidden">
 				<span class="sel-label">Punkt:</span>
 				<span id="selInfo"></span>
-				<label class="sel-gas">Gas
-					<select id="selGas"></select>
-				</label>
+				<label class="sel-gas">Gas <select id="selGas"></select></label>
 				<button id="delPoint" class="del-point" title="Ausgewählten Punkt löschen">Löschen</button>
 			</div>
 		</section>
 
 		<aside class="panel">
 			<fieldset>
-				<legend>Pläne</legend>
-				<div class="plans">
-					<input id="planName" type="text" placeholder="Name" maxlength="40">
-					<button id="savePlan" class="add">Speichern</button>
-				</div>
-				<div class="plans">
-					<select id="planList"></select>
-					<button id="loadPlan" class="add">Laden</button>
-					<button id="delPlan" class="add">Löschen</button>
-				</div>
+				<legend>Tauchgang</legend>
+				<label class="row">Kreislauf
+					<select id="mode">
+						<option value="oc">Offen (OC)</option>
+						<option value="ccr">Kreislaufgerät (CCR)</option>
+					</select>
+				</label>
+				<label class="row check ccr-only"><input id="bailout" type="checkbox"> Deko auf OC-Bailout (statt Loop)</label>
+				<label class="row check"><input id="snap" type="checkbox" checked> Raster (3 m / 1 min)</label>
 			</fieldset>
 
+			<fieldset>
+				<legend>Flaschen für diesen Tauchgang</legend>
+				<div id="cylPicker"><span class="muted">Inventar unter „Ausrüstung" anlegen.</span></div>
+			</fieldset>
+
+			<fieldset>
+				<legend>Vorschläge</legend>
+				<button id="suggestplan" class="add">Plan → Gase &amp; Flaschen vorschlagen</button>
+				<button id="bestdeco" class="add">Deko-Gase vorschlagen</button>
+				<div class="bestmix">
+					<label>Beste Mischung für <input id="bestdepth" type="number" min="6" max="120" value="50"> m</label>
+					<button id="bestmix" class="add">Berechnen</button>
+				</div>
+				<div id="bestresult" class="bestresult"></div>
+			</fieldset>
+
+			<fieldset>
+				<legend>Ergebnis</legend>
+				<div id="stops"></div>
+				<div id="gas" class="mt"></div>
+				<div id="mingas" class="mt"></div>
+			</fieldset>
+
+			<fieldset>
+				<legend>Warnungen</legend>
+				<div id="warnings"></div>
+			</fieldset>
+
+			<fieldset>
+				<legend>Variationen</legend>
+				<button id="calcvar" class="add">Berechnen (+5 min / +3 m)</button>
+				<div id="variations" class="muted"></div>
+			</fieldset>
+		</aside>
+	</main>
+
+	<!-- ============================ AUSRÜSTUNG ============================ -->
+	<main id="view-gear" class="view">
+		<aside class="panel panel-wide">
+			<fieldset>
+				<legend>Mein Inventar (dauerhaft gespeichert)</legend>
+				<div id="inventory"></div>
+				<button id="invAdd" class="add">+ Flasche</button>
+			</fieldset>
+		</aside>
+
+		<aside class="panel">
 			<fieldset>
 				<legend>Algorithmus</legend>
 				<label class="row">Modell
@@ -62,25 +111,20 @@
 					<label>GF low <input id="gflow" type="number" min="10" max="100" value="30"></label>
 					<label>GF high <input id="gfhigh" type="number" min="10" max="100" value="75"></label>
 				</div>
-				<label class="row vpmb-only">VPM-B Konservatismus
-					<input id="vpmb" type="number" min="0" max="5" value="3"></label>
-				<label class="row">Kreislauf
-					<select id="mode">
-						<option value="oc">Offen (OC)</option>
-						<option value="ccr">Kreislaufgerät (CCR)</option>
-					</select>
-				</label>
-				<div class="gf-row ccr-only">
+				<label class="row vpmb-only">VPM-B Konservatismus <input id="vpmb" type="number" min="0" max="5" value="3"></label>
+			</fieldset>
+
+			<fieldset>
+				<legend>CCR-Setpoints</legend>
+				<div class="gf-row">
 					<label>Start-SP (bar) <input id="spLow" type="number" min="0.4" max="1.6" step="0.1" value="0.7"></label>
 					<label>Bottom-SP (bar) <input id="spHigh" type="number" min="0.4" max="1.6" step="0.1" value="1.3"></label>
 				</div>
-				<label class="row ccr-only">→ Bottom-SP ab Tiefe (m)
-					<input id="spSwitch" type="number" min="0" max="100" value="21"></label>
-				<div class="gf-row ccr-only">
+				<label class="row">→ Bottom-SP ab Tiefe (m) <input id="spSwitch" type="number" min="0" max="100" value="21"></label>
+				<div class="gf-row">
 					<label>Deko-SP (bar) <input id="spDeco" type="number" min="0.4" max="1.6" step="0.1" value="1.6"></label>
 					<label>Deko-SP ab Tiefe (m) <input id="spDecoDepth" type="number" min="0" max="30" value="6"></label>
 				</div>
-				<label class="row check ccr-only"><input id="bailout" type="checkbox"> Deko auf OC-Bailout (statt Loop)</label>
 			</fieldset>
 
 			<fieldset>
@@ -89,8 +133,7 @@
 					<label>Abstieg (m/min) <input id="descrate" type="number" min="3" max="60" value="18"></label>
 					<label>Aufstieg (m/min) <input id="ascrate" type="number" min="1" max="18" value="9"></label>
 				</div>
-				<label class="row">Aufstieg letzte 6 m (m/min)
-					<input id="ascrate6m" type="number" min="1" max="18" value="9"></label>
+				<label class="row">Aufstieg letzte 6 m (m/min) <input id="ascrate6m" type="number" min="1" max="18" value="9"></label>
 				<label class="row check"><input id="laststop" type="checkbox"> Letzter Dekostopp bei 6 m (statt 3 m)</label>
 				<label class="row check"><input id="safetystop" type="checkbox" checked> Sicherheitsstopp (3 min @ 5 m bei Nullzeit)</label>
 				<label class="row check"><input id="dropstone" type="checkbox"> Sofort-Abstieg (Drop Stone)</label>
@@ -104,43 +147,7 @@
 			</fieldset>
 
 			<fieldset>
-				<legend>Variationen</legend>
-				<button id="calcvar" class="add">Berechnen (+5 min / +3 m)</button>
-				<div id="variations" class="muted"></div>
-			</fieldset>
-
-			<fieldset>
-				<legend>Gase</legend>
-				<div id="cylinders"></div>
-				<button id="addcyl" class="add">+ Flasche</button>
-				<div class="bestmix">
-					<button id="suggestplan" class="add">Plan → Gase &amp; Flaschengrößen vorschlagen</button>
-					<label>Beste Mischung für <input id="bestdepth" type="number" min="6" max="120" value="50"> m</label>
-					<button id="bestmix" class="add">Berechnen</button>
-					<button id="bestdeco" class="add">Deko-Gase vorschlagen</button>
-					<div id="bestresult" class="bestresult"></div>
-				</div>
-			</fieldset>
-
-			<fieldset>
-				<legend>Meine Flaschen</legend>
-				<div class="plans">
-					<select id="invPreset"></select>
-					<input id="invCount" type="number" min="1" max="9" value="1" title="Anzahl">
-					<button id="invAdd" class="add">+</button>
-				</div>
-				<div id="invList"></div>
-			</fieldset>
-
-			<fieldset>
-				<legend>Warnungen</legend>
-				<label class="row">END-Grenze (m)
-					<input id="endlimit" type="number" min="10" max="60" value="30"></label>
-				<div id="warnings"></div>
-			</fieldset>
-
-			<fieldset>
-				<legend>Verbrauch &amp; Umgebung</legend>
+				<legend>Verbrauch, Umgebung &amp; Limits</legend>
 				<div class="gf-row">
 					<label>SAC Grund (L/min) <input id="bottomsac" type="number" min="5" max="40" step="0.5" value="20"></label>
 					<label>SAC Deko (L/min) <input id="decosac" type="number" min="5" max="40" step="0.5" value="17"></label>
@@ -149,26 +156,34 @@
 					<label>Oberfläche (mbar) <input id="surface" type="number" min="800" max="1100" value="1013"></label>
 					<label>Salinität (g/10L) <input id="salinity" type="number" min="9000" max="10500" value="10300"></label>
 				</div>
-				<label class="row check"><input id="snap" type="checkbox" checked> Raster (3 m / 1 min)</label>
-			</fieldset>
-
-			<fieldset>
-				<legend>Dekostopps</legend>
-				<div id="stops"></div>
-			</fieldset>
-
-			<fieldset>
-				<legend>Gasverbrauch</legend>
-				<div id="gas"></div>
-			</fieldset>
-
-			<fieldset>
-				<legend>Min. Gas / Reserve</legend>
 				<div class="gf-row">
+					<label>END-Grenze (m) <input id="endlimit" type="number" min="10" max="60" value="30"></label>
 					<label>Problemlösungszeit (min) <input id="probtime" type="number" min="0" max="30" value="4"></label>
-					<label>Reserve-Gas (bar) <input id="reservegas" type="number" min="0" max="200" value="40"></label>
 				</div>
-				<div id="mingas"></div>
+				<label class="row">Reserve-Gas (bar) <input id="reservegas" type="number" min="0" max="200" value="40"></label>
+			</fieldset>
+
+			<fieldset>
+				<legend>Pläne</legend>
+				<div class="plans">
+					<input id="planName" type="text" placeholder="Name" maxlength="40">
+					<button id="savePlan" class="add">Speichern</button>
+				</div>
+				<div class="plans">
+					<select id="planList"></select>
+					<button id="loadPlan" class="add">Laden</button>
+					<button id="delPlan" class="add">Löschen</button>
+				</div>
+			</fieldset>
+		</aside>
+	</main>
+
+	<!-- ============================ ASSISTENT ============================ -->
+	<main id="view-wizard" class="view">
+		<aside class="panel panel-wide">
+			<fieldset>
+				<legend>Assistent</legend>
+				<div id="wizard" class="muted">Kommt als Nächstes: geführter Ablauf (Flaschen wählen → Zieltiefe → Ergebnis / max. Grundzeit).</div>
 			</fieldset>
 		</aside>
 	</main>
