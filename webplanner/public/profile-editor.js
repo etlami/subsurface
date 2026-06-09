@@ -220,7 +220,7 @@ export class ProfileEditor {
 		depthMm = Math.max(0, depthMm);
 		if (this.snap) {
 			timeS = Math.round(timeS / 60) * 60;
-			depthMm = Math.round(depthMm / 3000) * 3000;
+			depthMm = Math.round(depthMm / 1000) * 1000;
 		}
 		return { time: timeS, depth: depthMm, cyl: 0 };
 	}
