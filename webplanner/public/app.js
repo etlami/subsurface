@@ -34,6 +34,7 @@ const defaultState = () => ({
 		reserve_gas_mbar: 40000,          // deco-gas reserve (40 bar)
 	},
 	drop_stone: 0,                       // instant descent to the first waypoint
+	inventory: [],             // owned cylinders: [{name, count}]
 	ppo2_limit: 1.6,           // deco-gas MOD limit
 	ppo2_working: 1.4,         // working-gas MOD limit (for warnings)
 	end_limit_m: 30,           // narcosis (END) warning threshold
@@ -55,6 +56,32 @@ const $ = (id) => document.getElementById(id);
 
 const GAS_PALETTE = ['#33424d', '#1e8e5a', '#c98a00', '#7a3fb0', '#0c8599', '#b5485d', '#5f7d1f', '#8a5a2b'];
 const gasColor = (i) => GAS_PALETTE[i % GAS_PALETTE.length];
+
+// Subsurface's standard cylinder presets [name, water volume ml, working bar].
+// Imperial cylinders (AL/LP/HP) pre-converted to metric (psi->mbar, cuft->ml).
+const TANK_PRESETS = [
+	['10 L 200 bar', 10000, 200], ['10 L 232 bar', 10000, 232], ['10 L 300 bar', 10000, 300],
+	['11.1 L 232 bar', 11100, 232],
+	['12 L 200 bar', 12000, 200], ['12 L 232 bar', 12000, 232], ['12 L 300 bar', 12000, 300],
+	['15 L 200 bar', 15000, 200], ['15 L 232 bar', 15000, 232],
+	['3 L 232 bar', 3000, 232], ['3 L 300 bar', 3000, 300], ['ALU7', 7000, 200],
+	['AL40', 5549, 207], ['AL50', 6936, 207], ['AL63', 8739, 207], ['AL72', 9987, 207], ['AL80', 11097, 207], ['AL100', 12610, 228],
+	['LP85', 13398, 182], ['LP95', 14975, 182], ['LP108', 17024, 182], ['LP121', 19073, 182],
+	['HP65', 7859, 237], ['HP80', 9672, 237], ['HP100', 12090, 237], ['HP117', 14145, 237], ['HP119', 14387, 237], ['HP130', 15717, 237],
+	['D7 232 bar', 14000, 232], ['D7 300 bar', 14000, 300], ['D8.5 232 bar', 17000, 232],
+	['D12 232 bar', 24000, 232], ['D13 232 bar', 26000, 232], ['D15 232 bar', 30000, 232],
+	['D16 232 bar', 32000, 232], ['D18 232 bar', 36000, 232], ['D20 232 bar', 40000, 232],
+];
+const presetByName = (n) => TANK_PRESETS.find((t) => t[0] === n);
+// Best-matching preset name for a (size, pressure), for showing in dropdowns.
+function presetName(size_ml, wp_mbar) {
+	let best = '', bestErr = Infinity;
+	for (const [n, ml, bar] of TANK_PRESETS) {
+		const e = Math.abs(ml - size_ml) + Math.abs(bar * 1000 - wp_mbar) / 10;
+		if (e < bestErr) { bestErr = e; best = n; }
+	}
+	return bestErr < 600 ? best : '';
+}
 
 function mixName(o2, he) {
 	if (o2 === 1000) return 'O₂';
@@ -359,13 +386,21 @@ function renderCylinders() {
 	state.cylinders.forEach((c, i) => {
 		const row = document.createElement('div');
 		row.className = 'cyl-row';
+		const curPreset = presetName(c.size_ml, c.workingpressure_mbar);
+		const opts = ['<option value="">– Flasche –</option>']
+			.concat(TANK_PRESETS.map(([n]) => `<option value="${n}" ${n === curPreset ? 'selected' : ''}>${n}</option>`)).join('');
 		row.innerHTML = `
 			<span class="cyl-idx"><span class="gas-dot" style="background:${gasColor(i)}"></span>${i}${i === 0 ? ' (Back)' : ''}</span>
 			<label>O₂% <input type="number" min="5" max="100" value="${(c.o2_permille / 10).toFixed(0)}" data-f="o2"></label>
 			<label>He% <input type="number" min="0" max="95" value="${(c.he_permille / 10).toFixed(0)}" data-f="he"></label>
+			<label class="cyl-preset">Flasche <select data-f="preset">${opts}</select></label>
 			<label>Größe <input type="number" min="1" max="40" step="0.1" value="${(c.size_ml / 1000).toFixed(1)}" data-f="size"></label>
 			<label>bar <input type="number" min="50" max="300" value="${(c.workingpressure_mbar / 1000).toFixed(0)}" data-f="wp"></label>
 			<button class="del" title="Flasche entfernen" ${state.cylinders.length <= 1 ? 'disabled' : ''}>×</button>`;
+		row.querySelector('[data-f=preset]').addEventListener('change', (e) => {
+			const p = presetByName(e.target.value);
+			if (p) { c.size_ml = p[1]; c.workingpressure_mbar = p[2] * 1000; renderCylinders(); refreshGasColors(); recompute(); }
+		});
 		row.querySelectorAll('input').forEach((inp) => {
 			inp.addEventListener('change', () => {
 				const v = parseFloat(inp.value) || 0;
@@ -449,6 +484,7 @@ function bindParams() {
 	$('bestmix').addEventListener('click', suggestBestMix);
 	$('bestdeco').addEventListener('click', suggestDecoGases);
 	$('suggestplan').addEventListener('click', suggestPlanGases);
+	$('invAdd').addEventListener('click', addInventory);
 	$('export').addEventListener('click', exportPng);
 	$('print').addEventListener('click', () => window.print());
 	$('savePlan').addEventListener('click', savePlan);
@@ -548,6 +584,43 @@ function planGasUsed(waypoints) {
 	return { used, decoMin };
 }
 
+// --- owned-cylinder inventory ("Meine Flaschen") ----------------------------
+const cylUsableL = (ml, bar, frac) => ml / 1000 * bar * frac;
+function matchInventory(used_ml, usableFrac, allowDoubles) {
+	const needL = used_ml / 1000;
+	let best = null;
+	for (const inv of state.inventory) {
+		const p = presetByName(inv.name); if (!p) continue;
+		const [n, ml, bar] = p;
+		if (inv.count >= 1 && cylUsableL(ml, bar, usableFrac) >= needL && (!best || ml < best.vol)) best = { label: n, vol: ml };
+		if (allowDoubles && inv.count >= 2 && cylUsableL(2 * ml, bar, usableFrac) >= needL && (!best || 2 * ml < best.vol)) best = { label: `2× ${n}`, vol: 2 * ml };
+	}
+	return best ? best.label : null;
+}
+function renderInventory() {
+	const el = $('invList'); if (!el) return;
+	el.innerHTML = state.inventory.length
+		? state.inventory.map((inv, idx) => {
+			const p = presetByName(inv.name);
+			const lbl = p ? `${inv.name} (${(p[1] / 1000).toFixed(1)} L)` : inv.name;
+			return `<div class="inv-row"><span>${inv.count}× ${lbl}</span><button data-idx="${idx}" class="del">×</button></div>`;
+		}).join('')
+		: '<span class="muted">Keine Flaschen ausgewählt</span>';
+	el.querySelectorAll('.del').forEach((b) => b.addEventListener('click', () => { state.inventory.splice(+b.dataset.idx, 1); renderInventory(); }));
+}
+function populateInvPreset() {
+	const sel = $('invPreset'); if (!sel) return;
+	sel.innerHTML = TANK_PRESETS.map(([n, ml, bar]) => `<option value="${n}">${n} (${(ml / 1000).toFixed(1)} L)</option>`).join('');
+}
+function addInventory() {
+	const name = $('invPreset').value;
+	const count = Math.max(1, parseInt($('invCount').value, 10) || 1);
+	if (!name) return;
+	const ex = state.inventory.find((i) => i.name === name);
+	if (ex) ex.count += count; else state.inventory.push({ name, count });
+	renderInventory();
+}
+
 function suggestPlanGases() {
 	const wp = editor.getWaypoints();
 	const D = wp.length ? Math.max(...wp.map((w) => w.depth)) / 1000 : 0;
@@ -555,6 +628,7 @@ function suggestPlanGases() {
 	const el = $('bestresult');
 	if (!D) { el.textContent = 'Erst ein Profil zeichnen.'; return; }
 	const decoMin = planGasUsed(wp).decoMin; // deco time of the current plan
+	let usedByCyl = {}; // ml per displayed cylinder index
 	if (state.dive_mode === 1) {
 		// CCR: diluent on the loop + OC bailout ladder; setpoints by depth/deco.
 		state.cylinders = [{ ...ccrDiluent(D), size_ml: 3000, workingpressure_mbar: WP },
@@ -567,19 +641,26 @@ function suggestPlanGases() {
 		const prev = state.params.dobailout; state.params.dobailout = 1;
 		const { used } = planGasUsed(editor.getWaypoints());
 		state.params.dobailout = prev;
-		const dilId = state.cylinders.length;
-		state.cylinders[0].size_ml = pickSizeMl(used[dilId] || 0, WP, 2 / 3, 5700); // diluent = bottom bailout
-		for (let i = 1; i < state.cylinders.length; i++) state.cylinders[i].size_ml = pickSizeMl(used[i] || 0, WP, 0.75, 5700);
+		usedByCyl[0] = used[state.cylinders.length] || 0; // diluent = bottom bailout
+		for (let i = 1; i < state.cylinders.length; i++) usedByCyl[i] = used[i] || 0;
 	} else {
 		// OC: back gas + standard deco gases.
 		state.cylinders = [{ ...ocBottomGas(D), size_ml: 24000, workingpressure_mbar: WP },
 			...(decoMin > 0 ? ocDecoSet(D) : []).map((g) => ({ ...g, size_ml: 11100, workingpressure_mbar: WP }))];
 		const { used } = planGasUsed(editor.getWaypoints());
-		state.cylinders.forEach((c, i) => { c.size_ml = pickSizeMl(used[i] || 0, WP, i === 0 ? 2 / 3 : 0.75, i === 0 ? 7000 : 5700); });
+		state.cylinders.forEach((c, i) => { usedByCyl[i] = used[i] || 0; });
 	}
+	// Optimal size (any standard) vs possible (best from owned inventory).
+	const lines = state.cylinders.map((c, i) => {
+		const back = i === 0, frac = back ? 2 / 3 : 0.75;
+		const optMl = pickSizeMl(usedByCyl[i], WP, frac, back ? 7000 : 5700);
+		c.size_ml = optMl; c.workingpressure_mbar = WP;
+		const poss = matchInventory(usedByCyl[i], frac, back);
+		return `${i} <b>${gasName(c)}</b>: optimal ${(optMl / 1000).toFixed(1)} L · möglich ${poss || '—'} <span class="muted">(${Math.round(usedByCyl[i] / 1000)} L Verbrauch)</span>`;
+	});
 	renderCylinders(); refreshGasColors(); syncInputsFromState(); recompute();
-	el.innerHTML = `→ ${state.dive_mode === 1 ? 'CCR' : 'OC'} für ${D.toFixed(0)} m / ${decoMin} min Deko:<br>` +
-		state.cylinders.map((c, i) => `${i}: <b>${gasName(c)}</b> ${(c.size_ml / 1000).toFixed(1)} L`).join(' · ');
+	el.innerHTML = `→ ${state.dive_mode === 1 ? 'CCR' : 'OC'} für ${D.toFixed(0)} m / ${decoMin} min Deko:<br>` + lines.join('<br>') +
+		(state.inventory.length ? '' : '<br><span class="muted">Tipp: unter „Meine Flaschen" dein Inventar wählen für „möglich".</span>');
 }
 
 // --- best deco gas suggestion (OC) ------------------------------------------
@@ -694,7 +775,7 @@ function encodeState() {
 		p: state.params,
 		m: state.dive_mode, spl: state.sp_low_mbar, sph: state.sp_high_mbar, spd: state.sp_switch_depth_mm,
 		spdeco: state.sp_deco_mbar, spdd: state.sp_deco_depth_mm, el: state.end_limit_m,
-		ds: state.drop_stone,
+		ds: state.drop_stone, inv: state.inventory,
 	};
 	return btoa(unescape(encodeURIComponent(JSON.stringify(obj)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
@@ -744,6 +825,7 @@ function applyDecoded(obj) {
 	if (typeof obj.spdd === 'number') state.sp_deco_depth_mm = obj.spdd;
 	if (typeof obj.el === 'number') state.end_limit_m = obj.el;
 	if (typeof obj.ds === 'number') state.drop_stone = obj.ds;
+	if (Array.isArray(obj.inv)) state.inventory = obj.inv.filter((x) => x && x.name).map((x) => ({ name: x.name, count: x.count || 1 }));
 	state.cylinders = obj.c.map((a) => ({ o2_permille: a[0], he_permille: a[1], size_ml: a[2], workingpressure_mbar: a[3] }));
 	editor.setWaypoints(obj.w.map((a) => ({ time: a[0], depth: a[1], cyl: a[2] || 0 })), false);
 	return true;
@@ -760,6 +842,7 @@ function loadPlanObject(obj) {
 	syncInputsFromState();
 	renderCylinders();
 	refreshGasColors();
+	renderInventory();
 	recompute();
 }
 
@@ -819,4 +902,6 @@ syncInputsFromState();
 renderCylinders();
 refreshGasColors();
 refreshPlanList();
+populateInvPreset();
+renderInventory();
 calculate(editor.getWaypoints());

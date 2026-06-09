@@ -118,12 +118,15 @@ select { width: auto; }
 
 .cyl-row {
 	display: grid;
-	grid-template-columns: auto 1fr 1fr 1fr 1fr auto;
+	grid-template-columns: auto 1fr 1fr 1.7fr 1fr 1fr auto;
 	gap: 6px;
 	align-items: end;
 	padding: 6px 0;
 	border-top: 1px solid var(--line);
 }
+.cyl-row select { width: 100%; padding: 4px 4px; font-size: 11px; }
+.inv-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding: 3px 0; }
+.inv-row .del { height: 24px; }
 .cyl-row:first-child { border-top: none; }
 .cyl-row label { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted); }
 .cyl-row input { width: 100%; padding: 4px 5px; }
