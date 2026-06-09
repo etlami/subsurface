@@ -656,7 +656,10 @@ function suggestPlanGases() {
 		const optMl = pickSizeMl(usedByCyl[i], WP, frac, back ? 7000 : 5700);
 		c.size_ml = optMl; c.workingpressure_mbar = WP;
 		const poss = matchInventory(usedByCyl[i], frac, back);
-		return `${i} <b>${gasName(c)}</b>: optimal ${(optMl / 1000).toFixed(1)} L · möglich ${poss || '—'} <span class="muted">(${Math.round(usedByCyl[i] / 1000)} L Verbrauch)</span>`;
+		const possTxt = state.inventory.length
+			? (poss ? `aus Inventar: <b>${poss}</b>` : '<span class="o2-err">keine deiner Flaschen reicht</span>')
+			: 'aus Inventar: <span class="muted">— (kein Inventar)</span>';
+		return `${i} <b>${gasName(c)}</b>: mind. <b>${(optMl / 1000).toFixed(1)} L</b> · ${possTxt} <span class="muted">(~${Math.round(usedByCyl[i] / 1000)} L)</span>`;
 	});
 	renderCylinders(); refreshGasColors(); syncInputsFromState(); recompute();
 	el.innerHTML = `→ ${state.dive_mode === 1 ? 'CCR' : 'OC'} für ${D.toFixed(0)} m / ${decoMin} min Deko:<br>` + lines.join('<br>') +
