@@ -124,6 +124,14 @@ th { color: var(--muted); font-weight: 600; }
 body.is-vpmb .vpmb-only { display: flex; }
 body.is-vpmb .gf-row:has(#gflow) { opacity: .4; }
 
+/* CCR-only controls */
+.ccr-only { display: none; }
+body.is-ccr .ccr-only { display: flex; }
+
+/* CNS emphasis in the summary line */
+.summary .o2-warn { color: #8a5a00; }
+.summary .o2-err { color: #b3261e; }
+
 /* selected-point bar under the profile */
 .selpoint {
 	display: flex;

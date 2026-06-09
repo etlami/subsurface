@@ -9,20 +9,124 @@
 // example of driving the planner without any Qt/UI dependency.
 
 #include <emscripten/bind.h>
+#include <cmath>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "core/deco.h"
 #include "core/dive.h"
+#include "core/divecomputer.h"
 #include "core/divelist.h" // for init_decompression()
 #include "core/event.h"
 #include "core/planner.h"
 #include "core/pref.h"
 #include "core/gas.h"
 #include "core/sample.h"
+#include "core/range.h"
 #include "core/units.h"
 
 using namespace emscripten;
+
+// ---- O2 exposure (CNS% / OTU) ----------------------------------------------
+// Ported verbatim from core/divelist.cpp (calculate_otu / calculate_cns_dive),
+// which is file-static and lives in a translation unit we don't compile (it
+// pulls libxslt via qthelper.h). The helpers it calls (get_dive_status_at,
+// get_gasmix_at_time, pscr_o2, depth_to_*) are all linked from the core units
+// we DO build, so the formulas run unchanged here.
+
+static int ss_active_o2(const struct dive &dive, const struct divecomputer *dc, duration_t time)
+{
+	struct gasmix gas = dive.get_gasmix_at_time(*dc, time);
+	return get_o2(gas);
+}
+
+static int ss_calculate_otu(const struct dive &dive)
+{
+	double otu = 0.0;
+	const struct divecomputer &dc = dive.dcs[0];
+	gasmix_loop loop_gas(dive, dc);
+	divemode_loop loop_mode(dc);
+	for (auto [psample, sample] : pairwise_range(dc.samples)) {
+		int po2i, po2f;
+		double pm;
+		int t = (sample.time - psample.time).seconds;
+		depth_t depth = sample.depth;
+		depth_t pdepth = psample.depth;
+		if ((dc.divemode == CCR || dc.divemode == PSCR) && psample.o2sensor[0].mbar) {
+			po2i = psample.o2sensor[0].mbar;
+			po2f = sample.o2sensor[0].mbar ? sample.o2sensor[0].mbar : po2i;
+		} else {
+			[[maybe_unused]] auto [divemode, _ci, _gas] = get_dive_status_at(dive, dc, psample.time.seconds, &loop_mode, &loop_gas);
+			if (divemode == CCR) {
+				po2i = std::min((int) psample.setpoint.mbar, dive.depth_to_mbar(pdepth));
+				po2f = std::min((int) psample.setpoint.mbar, dive.depth_to_mbar(depth));
+			} else {
+				double amb = dive.depth_to_bar(depth);
+				double pamb = dive.depth_to_bar(pdepth);
+				if (dc.divemode == PSCR) {
+					po2i = pscr_o2(pamb, dive.get_gasmix_at_time(dc, psample.time));
+					po2f = pscr_o2(amb, dive.get_gasmix_at_time(dc, sample.time));
+				} else {
+					int o2 = ss_active_o2(dive, &dc, psample.time);
+					po2i = lrint(o2 * pamb);
+					po2f = lrint(o2 * amb);
+				}
+			}
+		}
+		if ((po2i > 500) || (po2f > 500)) {
+			if (po2i <= 500) {
+				t = t * (po2f - 500) / (po2f - po2i);
+				po2i = 501;
+			} else if (po2f <= 500) {
+				t = t * (po2i - 500) / (po2i - po2f);
+				po2f = 501;
+			}
+			pm = (po2f + po2i) / 1000.0 - 1.0;
+			otu += t / 60.0 * pow(pm, 5.0 / 6.0) * (1.0 - 5.0 * (po2f - po2i) * (po2f - po2i) / 216000000.0 / (pm * pm));
+		}
+	}
+	return lrint(otu);
+}
+
+static double ss_calculate_cns_dive(const struct dive &dive)
+{
+	const struct divecomputer dc = dive.dcs[0];
+	double cns = 0.0;
+	gasmix_loop loop_gas(dive, dc);
+	divemode_loop loop_mode(dc);
+	for (auto [psample, sample] : pairwise_range(dc.samples)) {
+		int t = (sample.time - psample.time).seconds;
+		int po2i, po2f, po2;
+		depth_t depth = sample.depth;
+		depth_t pdepth = psample.depth;
+		[[maybe_unused]] auto [divemode, _ci, _gas] = get_dive_status_at(dive, dc, psample.time.seconds, &loop_mode, &loop_gas);
+		if ((dc.divemode == CCR || dc.divemode == PSCR) && psample.o2sensor[0].mbar) {
+			po2i = psample.o2sensor[0].mbar;
+			po2f = sample.o2sensor[0].mbar ? sample.o2sensor[0].mbar : po2i;
+			po2 = (po2f + po2i) / 2;
+		} else if (divemode == CCR) {
+			po2 = std::min((int) psample.setpoint.mbar, dive.depth_to_mbar(pdepth));
+		} else {
+			double amb = dive.depth_to_bar(depth);
+			double pamb = dive.depth_to_bar(pdepth);
+			if (dc.divemode == PSCR) {
+				po2i = pscr_o2(pamb, dive.get_gasmix_at_time(dc, psample.time));
+				po2f = pscr_o2(amb, dive.get_gasmix_at_time(dc, sample.time));
+			} else {
+				int o2 = ss_active_o2(dive, &dc, psample.time);
+				po2i = lrint(o2 * pamb);
+				po2f = lrint(o2 * amb);
+			}
+			po2 = (po2i + po2f) / 2;
+		}
+		if (po2 <= 500)
+			continue;
+		double rate = po2 <= 1500 ? exp(-11.7853 + 0.00193873 * po2) : exp(-23.6349 + 0.00980829 * po2);
+		cns += (double) t * rate * 100.0;
+	}
+	return cns;
+}
 
 // ---- Input value objects (plain data, populated from JS) -------------------
 
@@ -79,6 +183,8 @@ struct JsGasUse {
 
 struct JsResult {
 	int error = 0;             // planner_error_t
+	int cns = 0;               // CNS % at end of dive
+	int otu = 0;               // OTU (pulmonary O2 toxicity units)
 	std::vector<JsSample> samples;
 	std::vector<JsDecoStop> stops;
 	std::vector<JsGasUse> gas;
@@ -176,6 +282,12 @@ static JsResult run_plan(const JsParams &params,
 		result.gas.push_back(g);
 	}
 
+	// O2 exposure over the planned profile.
+	if (!dive.dcs.empty() && dive.dcs[0].samples.size() > 1) {
+		result.cns = static_cast<int>(lrint(ss_calculate_cns_dive(dive)));
+		result.otu = ss_calculate_otu(dive);
+	}
+
 	return result;
 }
 
@@ -227,6 +339,8 @@ EMSCRIPTEN_BINDINGS(subsurface_planner) {
 
 	value_object<JsResult>("PlanResult")
 		.field("error", &JsResult::error)
+		.field("cns", &JsResult::cns)
+		.field("otu", &JsResult::otu)
 		.field("samples", &JsResult::samples)
 		.field("stops", &JsResult::stops)
 		.field("gas", &JsResult::gas)
