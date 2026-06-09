@@ -9,8 +9,11 @@
 </head>
 <body>
 	<header>
-		<h1>Tauchplaner</h1>
-		<p class="sub">Profil zeichnen — Dekoberechnung läuft live (Subsurface-Kern, WebAssembly)</p>
+		<div>
+			<h1>Tauchplaner</h1>
+			<p class="sub">Profil zeichnen — Dekoberechnung läuft live (Subsurface-Kern, WebAssembly)</p>
+		</div>
+		<button id="share" class="share" title="Teilbaren Link in die Zwischenablage kopieren">Teilen</button>
 	</header>
 
 	<main>
@@ -18,6 +21,13 @@
 			<div class="hint">Klicken zum Setzen · Punkt ziehen zum Verschieben · Doppelklick/Rechtsklick zum Löschen</div>
 			<canvas id="profile"></canvas>
 			<div id="summary" class="summary">…</div>
+			<div id="selpoint" class="selpoint hidden">
+				<span class="sel-label">Punkt:</span>
+				<span id="selInfo"></span>
+				<label class="sel-gas">Gas
+					<select id="selGas"></select>
+				</label>
+			</div>
 		</section>
 
 		<aside class="panel">
@@ -41,6 +51,11 @@
 				<legend>Gase</legend>
 				<div id="cylinders"></div>
 				<button id="addcyl" class="add">+ Flasche</button>
+			</fieldset>
+
+			<fieldset>
+				<legend>Warnungen</legend>
+				<div id="warnings"></div>
 			</fieldset>
 
 			<fieldset>

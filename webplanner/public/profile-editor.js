@@ -1,17 +1,17 @@
-// AI-generated (Claude)
 //
 // Interactive dive-profile editor on an HTML canvas.
 //
-// The user draws a dive plan as a series of waypoints (time, depth). The x-axis
-// is runtime in minutes, the y-axis is depth in metres with 0 at the top (like
-// the Subsurface desktop profile). This mirrors the drag-handle UX of the
+// The user draws a dive plan as a series of waypoints (time, depth, cyl). The
+// x-axis is runtime in minutes, the y-axis is depth in metres with 0 at the top
+// (like the Subsurface desktop profile). This mirrors the drag-handle UX of the
 // desktop planner (core widget: profile-widget/divehandler.cpp), but in the
 // browser:
-//   - click on empty space  -> add a waypoint
+//   - click on empty space  -> add a waypoint (inherits the previous gas)
+//   - click a handle         -> select it (gas shown/editable in the panel)
 //   - drag a handle          -> move a waypoint (live)
 //   - right-click / dblclick -> delete a waypoint
-// A computed profile (descent + bottom + staged deco ascent) and the deco
-// ceiling can be overlaid on top of the editable plan.
+// Each waypoint carries a cylinder index (cyl); handles are coloured by gas.
+// A computed profile and the deco ceiling can be overlaid on top.
 
 const HANDLE_R = 7;
 const PAD = { left: 54, right: 16, top: 16, bottom: 34 };
@@ -21,22 +21,21 @@ export class ProfileEditor {
 		this.canvas = canvas;
 		this.ctx = canvas.getContext('2d');
 		this.onChange = onChange;
+		this.onSelect = null;
 
-		// Editable plan waypoints: {time: seconds, depth: mm}. Always sorted by
-		// time. The implicit start is the surface at t=0.
+		// Editable plan waypoints: {time: seconds, depth: mm, cyl: index}.
+		// Always sorted by time. The implicit start is the surface at t=0.
 		this.waypoints = [
-			{ time: 120, depth: 30000 },
-			{ time: 20 * 60, depth: 30000 },
+			{ time: 120, depth: 30000, cyl: 0 },
+			{ time: 20 * 60, depth: 30000, cyl: 0 },
 		];
 
-		// Overlay (read-only) computed result: {samples:[{time_s,depth_mm,...}],
-		// stops:[...]}. Set via setComputed().
-		this.computed = null;
+		this.computed = null;     // {samples:[...]} set via setComputed()
+		this.gasColors = [];      // per-cylinder colour, set via setGasColors()
+		this.selectedIdx = -1;
 
-		// View scaling, recomputed each render.
 		this.maxTime = 30 * 60;
 		this.maxDepth = 40000;
-
 		this.dragIdx = -1;
 		this.snap = true;
 
@@ -66,10 +65,33 @@ export class ProfileEditor {
 	}
 
 	setSnap(on) { this.snap = on; this.render(); }
-
 	setComputed(result) { this.computed = result; this.render(); }
-
+	setGasColors(colors) { this.gasColors = colors || []; this.render(); }
 	getWaypoints() { return this.waypoints.map((w) => ({ ...w })); }
+	getSelected() { return this.selectedIdx >= 0 ? { ...this.waypoints[this.selectedIdx], idx: this.selectedIdx } : null; }
+
+	// Replace the whole plan (e.g. when restoring from a shared URL).
+	setWaypoints(list, notify = true) {
+		this.waypoints = (list && list.length ? list : this.waypoints).map((w) => ({
+			time: w.time, depth: w.depth, cyl: w.cyl || 0,
+		}));
+		this._sort();
+		this.selectedIdx = -1;
+		if (notify) this._changed(); else this.render();
+	}
+
+	// Clamp a cylinder index that no longer exists (after removing a gas).
+	clampGasIndices(numCyl) {
+		let changed = false;
+		for (const w of this.waypoints) if (w.cyl >= numCyl) { w.cyl = 0; changed = true; }
+		if (changed) this._changed(); else this.render();
+	}
+
+	setSelectedGas(cyl) {
+		if (this.selectedIdx < 0) return;
+		this.waypoints[this.selectedIdx].cyl = cyl;
+		this._changed();
+	}
 
 	// --- coordinate transforms -------------------------------------------------
 	_plotW() { return this.W - PAD.left - PAD.right; }
@@ -91,7 +113,6 @@ export class ProfileEditor {
 			const s = this.computed.samples;
 			for (let i = 0; i < s.length; i++) { mt = Math.max(mt, s[i].time_s); md = Math.max(md, s[i].depth_mm); }
 		}
-		// Add headroom and round to nice steps.
 		this.maxTime = Math.ceil((mt * 1.05) / 300) * 300;
 		this.maxDepth = Math.ceil((md * 1.1) / 3000) * 3000;
 	}
@@ -105,20 +126,35 @@ export class ProfileEditor {
 		return -1;
 	}
 
+	_select(idx) {
+		this.selectedIdx = idx;
+		this.onSelect?.(this.getSelected());
+	}
+
 	_onDown(e) {
 		const pos = this._evtPos(e);
 		const idx = this._hitHandle(pos);
 		if (idx >= 0) {
 			this.dragIdx = idx;
+			this._select(idx);
 			this.canvas.setPointerCapture?.(e.pointerId);
+			this.render();
 		} else if (e.button === 0 && pos.x > PAD.left && pos.y > PAD.top) {
-			// add a new waypoint at the clicked position
 			const w = this._clampSnap(this._timeAt(pos.x), this._depthAt(pos.y));
+			w.cyl = this._inheritGas(w.time);
 			this.waypoints.push(w);
 			this._sort();
 			this.dragIdx = this.waypoints.indexOf(w);
+			this._select(this.dragIdx);
 			this._changed();
 		}
+	}
+
+	// New points breathe the gas of the latest earlier waypoint.
+	_inheritGas(timeS) {
+		let cyl = 0, best = -1;
+		for (const w of this.waypoints) if (w.time <= timeS && w.time > best) { best = w.time; cyl = w.cyl; }
+		return cyl;
 	}
 
 	_onMove(e) {
@@ -128,22 +164,26 @@ export class ProfileEditor {
 			return;
 		}
 		const pos = this._evtPos(e);
+		const cyl = this.waypoints[this.dragIdx].cyl;
 		const w = this._clampSnap(this._timeAt(pos.x), this._depthAt(pos.y));
+		w.cyl = cyl;
 		this.waypoints[this.dragIdx] = w;
 		this._sort();
 		this.dragIdx = this.waypoints.indexOf(w);
+		this._select(this.dragIdx);
 		this.canvas.style.cursor = 'grabbing';
 		this._changed();
 	}
 
 	_onUp() { this.dragIdx = -1; }
-
 	_onDblClick(e) { this._deleteNear(e); }
 
 	_deleteNear(e) {
 		const idx = this._hitHandle(this._evtPos(e));
 		if (idx >= 0 && this.waypoints.length > 1) {
 			this.waypoints.splice(idx, 1);
+			this.selectedIdx = -1;
+			this.onSelect?.(null);
 			this._changed();
 		}
 	}
@@ -152,10 +192,10 @@ export class ProfileEditor {
 		timeS = Math.max(0, timeS);
 		depthMm = Math.max(0, depthMm);
 		if (this.snap) {
-			timeS = Math.round(timeS / 60) * 60;        // 1 min
-			depthMm = Math.round(depthMm / 3000) * 3000; // 3 m
+			timeS = Math.round(timeS / 60) * 60;
+			depthMm = Math.round(depthMm / 3000) * 3000;
 		}
-		return { time: timeS, depth: depthMm };
+		return { time: timeS, depth: depthMm, cyl: 0 };
 	}
 
 	_sort() { this.waypoints.sort((a, b) => a.time - b.time || a.depth - b.depth); }
@@ -179,7 +219,6 @@ export class ProfileEditor {
 		const ctx = this.ctx;
 		ctx.font = '11px system-ui, sans-serif';
 		ctx.lineWidth = 1;
-		// depth grid (horizontal)
 		const depthStep = this.maxDepth <= 18000 ? 3000 : this.maxDepth <= 45000 ? 6000 : 10000;
 		ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
 		for (let d = 0; d <= this.maxDepth; d += depthStep) {
@@ -189,7 +228,6 @@ export class ProfileEditor {
 			ctx.fillStyle = '#567';
 			ctx.fillText(`${(d / 1000).toFixed(0)}m`, PAD.left - 6, y);
 		}
-		// time grid (vertical)
 		const timeStep = this.maxTime <= 1800 ? 300 : this.maxTime <= 3600 ? 600 : 1200;
 		ctx.textAlign = 'center'; ctx.textBaseline = 'top';
 		for (let t = 0; t <= this.maxTime; t += timeStep) {
@@ -214,7 +252,6 @@ export class ProfileEditor {
 		ctx.strokeStyle = '#1b6ec2';
 		ctx.lineWidth = 2;
 		ctx.stroke();
-		// fill under the computed curve
 		ctx.lineTo(this._x(s[s.length - 1].time_s), this._y(0));
 		ctx.closePath();
 		ctx.fillStyle = 'rgba(27,110,194,0.08)';
@@ -240,24 +277,33 @@ export class ProfileEditor {
 		}
 	}
 
+	_gasColor(cyl) { return this.gasColors[cyl] || '#222'; }
+
 	_drawPlan() {
 		const ctx = this.ctx;
-		// line from surface through all waypoints
 		ctx.beginPath();
 		ctx.moveTo(this._x(0), this._y(0));
 		for (const w of this.waypoints) ctx.lineTo(this._x(w.time), this._y(w.depth));
-		ctx.strokeStyle = '#222';
+		ctx.strokeStyle = '#33424d';
 		ctx.lineWidth = 2;
 		ctx.stroke();
-		// handles
-		for (const w of this.waypoints) {
+		for (let i = 0; i < this.waypoints.length; i++) {
+			const w = this.waypoints[i];
 			const x = this._x(w.time), y = this._y(w.depth);
+			const selected = i === this.selectedIdx;
+			if (selected) {
+				ctx.beginPath();
+				ctx.arc(x, y, HANDLE_R + 4, 0, Math.PI * 2);
+				ctx.strokeStyle = '#1b6ec2';
+				ctx.lineWidth = 2;
+				ctx.stroke();
+			}
 			ctx.beginPath();
 			ctx.arc(x, y, HANDLE_R, 0, Math.PI * 2);
-			ctx.fillStyle = '#fff';
+			ctx.fillStyle = this._gasColor(w.cyl);
 			ctx.fill();
 			ctx.lineWidth = 2;
-			ctx.strokeStyle = '#222';
+			ctx.strokeStyle = '#fff';
 			ctx.stroke();
 		}
 	}
