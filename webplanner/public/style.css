@@ -36,6 +36,13 @@ header .sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
 	white-space: nowrap;
 }
 .share:hover { filter: brightness(1.05); }
+.header-actions { display: flex; gap: 8px; }
+.share.ghost { background: #fff; color: var(--accent); }
+
+.bestmix { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 13px; }
+.bestmix label { display: inline-flex; align-items: center; gap: 4px; }
+.bestmix input { width: 64px; }
+.bestresult { margin-top: 6px; color: #2c7a4b; font-size: 12.5px; min-height: 1em; }
 
 main {
 	display: grid;

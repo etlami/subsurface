@@ -25,7 +25,9 @@ const defaultState = () => ({
 	ppo2_working: 1.4,         // working-gas MOD limit (for warnings)
 	end_limit_m: 30,           // narcosis (END) warning threshold
 	dive_mode: 0,              // 0 = OC, 1 = CCR
-	setpoint_mbar: 1200,       // CCR setpoint
+	sp_low_mbar: 700,          // CCR low setpoint (shallow)
+	sp_high_mbar: 1200,        // CCR high setpoint (deep)
+	sp_switch_depth_mm: 21000, // depth at/below which the high setpoint applies
 	cylinders: [
 		{ o2_permille: 210, he_permille: 0, size_ml: 24000, workingpressure_mbar: 232000 }, // back gas (air)
 		{ o2_permille: 500, he_permille: 0, size_ml: 11100, workingpressure_mbar: 232000 }, // EAN50 deco
@@ -39,12 +41,29 @@ const $ = (id) => document.getElementById(id);
 const GAS_PALETTE = ['#33424d', '#1e8e5a', '#c98a00', '#7a3fb0', '#0c8599', '#b5485d', '#5f7d1f', '#8a5a2b'];
 const gasColor = (i) => GAS_PALETTE[i % GAS_PALETTE.length];
 
-function gasName(c) {
-	if (!c) return '?';
-	if (c.o2_permille === 1000) return 'O₂';
-	if (c.he_permille > 0) return `Tx ${Math.round(c.o2_permille / 10)}/${Math.round(c.he_permille / 10)}`;
-	if (c.o2_permille === 210) return 'Luft';
-	return `EAN${Math.round(c.o2_permille / 10)}`;
+function mixName(o2, he) {
+	if (o2 === 1000) return 'O₂';
+	if (he > 0) return `Tx ${Math.round(o2 / 10)}/${Math.round(he / 10)}`;
+	if (o2 === 210) return 'Luft';
+	return `EAN${Math.round(o2 / 10)}`;
+}
+function gasName(c) { return c ? mixName(c.o2_permille, c.he_permille) : '?'; }
+
+// Constant-depth deco stops detected from the sample plateaus (excluding the
+// bottom). Returns markers {time_s, depth_mm, min} for the graph.
+function decoStopMarkers(samples) {
+	if (samples.length < 2) return [];
+	const maxD = Math.max(...samples.map((s) => s.depth_mm));
+	const out = [];
+	let i = 0;
+	while (i < samples.length) {
+		const d = samples[i].depth_mm; let j = i;
+		while (j + 1 < samples.length && samples[j + 1].depth_mm === d) j++;
+		const dur = samples[j].time_s - samples[i].time_s;
+		if (d > 0 && d < maxD && dur >= 60) out.push({ time_s: samples[i].time_s + dur / 2, depth_mm: d, min: Math.round(dur / 60) });
+		i = j + 1;
+	}
+	return out;
 }
 
 // ppO2 (bar) of a gas at a depth in mm (seawater approx P_abs = 1 + d/10).
@@ -63,7 +82,7 @@ function modMm(o2_permille, ppo2_limit) {
 function buildSegments(waypoints) {
 	const ccr = state.dive_mode === 1;
 	const dm = ccr ? 1 : 0;
-	const sp = ccr ? state.setpoint_mbar : 0;
+	const spFor = (depth_mm) => (depth_mm >= state.sp_switch_depth_mm ? state.sp_high_mbar : state.sp_low_mbar);
 	const segs = [];
 	// Open-circuit only: register deco/travel gases at their MOD so the planner
 	// can auto-switch on ascent. On CCR the loop maintains the setpoint with the
@@ -82,7 +101,7 @@ function buildSegments(waypoints) {
 		segs.push({
 			time_incr_s: Math.max(0, w.time - prev), depth_mm: w.depth,
 			cylinderid: Math.min(w.cyl || 0, state.cylinders.length - 1),
-			setpoint_mbar: sp, divemode: dm, entered: true,
+			setpoint_mbar: ccr ? spFor(w.depth) : 0, divemode: dm, entered: true,
 		});
 		prev = w.time;
 	}
@@ -116,7 +135,17 @@ function renderResult(res, waypoints) {
 		const s = res.samples.get(i);
 		samples.push({ time_s: s.time_s, depth_mm: s.depth_mm, stopdepth_mm: s.stopdepth_mm, in_deco: s.in_deco });
 	}
-	editor.setComputed({ samples });
+	const switches = [];
+	for (let i = 0; i < res.switches.size(); i++) {
+		const s = res.switches.get(i);
+		switches.push({ time_s: s.time_s, label: mixName(s.o2_permille, s.he_permille), color: s.cylinderid >= 0 ? gasColor(s.cylinderid) : '#444' });
+	}
+	editor.setComputed({
+		samples,
+		switches,
+		stops: decoStopMarkers(samples),
+		setpointDepthMm: state.dive_mode === 1 ? state.sp_switch_depth_mm : null,
+	});
 
 	let maxDepth = 0, runtime = 0;
 	for (const s of samples) { if (s.depth_mm > maxDepth) maxDepth = s.depth_mm; if (s.time_s > runtime) runtime = s.time_s; }
@@ -160,17 +189,16 @@ function renderWarnings(waypoints) {
 	const endM = (he_permille, depth_mm) => (depth_mm / 1000 + 10) * (1 - he_permille / 1000) - 10;
 
 	if (ccr) {
-		// pO2 is the (constant) setpoint, capped by ambient when shallow.
+		// pO2 follows the setpoint (low above the switch depth, high below),
+		// capped by ambient when shallow.
 		const seen = new Set();
+		if (state.sp_high_mbar / 1000 > 1.6) out.push({ lvl: 'err', t: `High-Setpoint ${(state.sp_high_mbar / 1000).toFixed(2)} bar > 1,6 (Sauerstofftoxizität)` });
 		for (const w of waypoints) {
-			const amb = ambBar(w.depth);
-			const po2 = Math.min(state.setpoint_mbar / 1000, amb);
-			const dm = (w.depth / 1000).toFixed(0);
-			if (state.setpoint_mbar / 1000 > 1.6 && !seen.has('sp')) {
-				out.push({ lvl: 'err', t: `Setpoint ${(state.setpoint_mbar / 1000).toFixed(2)} bar > 1,6 (Sauerstofftoxizität)` });
-				seen.add('sp');
-			} else if (po2 < 0.18) {
-				out.push({ lvl: 'err', t: `Loop-pO₂ ${po2.toFixed(2)} bar auf ${dm} m < 0,18 (hypoxisch)` });
+			const sp = (w.depth >= state.sp_switch_depth_mm ? state.sp_high_mbar : state.sp_low_mbar) / 1000;
+			const po2 = Math.min(sp, ambBar(w.depth));
+			if (po2 < 0.18 && !seen.has('hyp')) {
+				out.push({ lvl: 'err', t: `Loop-pO₂ ${po2.toFixed(2)} bar auf ${(w.depth / 1000).toFixed(0)} m < 0,18 (hypoxisch)` });
+				seen.add('hyp');
 			}
 		}
 	} else {
@@ -286,8 +314,56 @@ function bindParams() {
 		document.body.classList.toggle('is-ccr', state.dive_mode === 1);
 		recompute();
 	});
-	$('setpoint').addEventListener('change', () => { state.setpoint_mbar = Math.round((parseFloat($('setpoint').value) || 1.2) * 1000); recompute(); });
+	$('spLow').addEventListener('change', () => { state.sp_low_mbar = Math.round((parseFloat($('spLow').value) || 0.7) * 1000); recompute(); });
+	$('spHigh').addEventListener('change', () => { state.sp_high_mbar = Math.round((parseFloat($('spHigh').value) || 1.2) * 1000); recompute(); });
+	$('spSwitch').addEventListener('change', () => { state.sp_switch_depth_mm = Math.round((parseFloat($('spSwitch').value) || 21) * 1000); recompute(); });
 	$('endlimit').addEventListener('change', () => { state.end_limit_m = Math.round(parseFloat($('endlimit').value) || 30); recompute(); });
+	$('bestmix').addEventListener('click', suggestBestMix);
+	$('export').addEventListener('click', exportPng);
+}
+
+// Best mix for a target depth: max O2 within the working pO2 limit, plus enough
+// He to keep END at/below the narcosis limit (o2narcotic convention).
+function suggestBestMix() {
+	const d = Math.max(0, parseFloat($('bestdepth').value) || 0);
+	const amb = 1 + d / 10;
+	let o2 = Math.floor((state.ppo2_working / amb) * 100);
+	o2 = Math.max(5, Math.min(100, o2));
+	let he = Math.ceil((1 - (state.end_limit_m + 10) / (d + 10)) * 100);
+	he = Math.max(0, Math.min(100 - o2, he));
+	const cyl = { o2_permille: o2 * 10, he_permille: he * 10, size_ml: 11100, workingpressure_mbar: 232000 };
+	state.cylinders.push(cyl);
+	renderCylinders();
+	refreshGasColors();
+	recompute();
+	$('bestresult').textContent = `→ ${mixName(cyl.o2_permille, cyl.he_permille)} als Flasche ${state.cylinders.length - 1} hinzugefügt`;
+}
+
+// Export the profile plus a result summary as a PNG.
+function exportPng() {
+	const src = editor.canvas;
+	const scale = 2;
+	const W = editor.W * scale, profH = editor.H * scale;
+	const lines = [
+		$('summary').innerText,
+		'Dekostopps: ' + ($('stops').innerText.replace(/\s+/g, ' ').replace('Tiefe Stopp', '').trim() || 'keine'),
+		'Warnungen: ' + $('warnings').innerText.replace(/\s+/g, ' ').trim(),
+	];
+	const lineH = 22 * scale, headH = 30 * scale, textH = headH + lines.length * lineH + 16 * scale;
+	const out = document.createElement('canvas');
+	out.width = W; out.height = profH + textH;
+	const ctx = out.getContext('2d');
+	ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, out.width, out.height);
+	ctx.fillStyle = '#1d2b33'; ctx.font = `bold ${16 * scale}px system-ui, sans-serif`;
+	ctx.fillText('Tauchplan (Subsurface-Kern)', 12 * scale, 22 * scale);
+	ctx.drawImage(src, 0, headH, W, profH);
+	ctx.font = `${13 * scale}px system-ui, sans-serif`;
+	ctx.fillStyle = '#33424d';
+	lines.forEach((l, i) => ctx.fillText(l, 12 * scale, profH + headH + (i + 1) * lineH));
+	const a = document.createElement('a');
+	a.href = out.toDataURL('image/png');
+	a.download = 'tauchplan.png';
+	a.click();
 }
 
 // Reflect restored state values back into the input fields.
@@ -302,7 +378,9 @@ function syncInputsFromState() {
 	$('algo').value = state.params.deco_mode === 1 ? 'vpmb' : 'buehlmann';
 	document.body.classList.toggle('is-vpmb', state.params.deco_mode === 1);
 	$('mode').value = state.dive_mode === 1 ? 'ccr' : 'oc';
-	$('setpoint').value = (state.setpoint_mbar / 1000).toFixed(1);
+	$('spLow').value = (state.sp_low_mbar / 1000).toFixed(1);
+	$('spHigh').value = (state.sp_high_mbar / 1000).toFixed(1);
+	$('spSwitch').value = (state.sp_switch_depth_mm / 1000).toFixed(0);
 	$('endlimit').value = state.end_limit_m;
 	document.body.classList.toggle('is-ccr', state.dive_mode === 1);
 }
@@ -315,7 +393,7 @@ function encodeState() {
 		w: editor.getWaypoints().map((w) => [w.time, w.depth, w.cyl || 0]),
 		c: state.cylinders.map((c) => [c.o2_permille, c.he_permille, c.size_ml, c.workingpressure_mbar]),
 		p: state.params,
-		m: state.dive_mode, sp: state.setpoint_mbar, el: state.end_limit_m,
+		m: state.dive_mode, spl: state.sp_low_mbar, sph: state.sp_high_mbar, spd: state.sp_switch_depth_mm, el: state.end_limit_m,
 	};
 	return btoa(unescape(encodeURIComponent(JSON.stringify(obj)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
@@ -361,7 +439,9 @@ function restoreFromHash() {
 	if (!obj) return false;
 	if (obj.p) Object.assign(state.params, obj.p);
 	if (typeof obj.m === 'number') state.dive_mode = obj.m;
-	if (typeof obj.sp === 'number') state.setpoint_mbar = obj.sp;
+	if (typeof obj.spl === 'number') state.sp_low_mbar = obj.spl;
+	if (typeof obj.sph === 'number') state.sp_high_mbar = obj.sph;
+	if (typeof obj.spd === 'number') state.sp_switch_depth_mm = obj.spd;
 	if (typeof obj.el === 'number') state.end_limit_m = obj.el;
 	state.cylinders = obj.c.map((a) => ({ o2_permille: a[0], he_permille: a[1], size_ml: a[2], workingpressure_mbar: a[3] }));
 	editor.setWaypoints(obj.w.map((a) => ({ time: a[0], depth: a[1], cyl: a[2] || 0 })), false);
