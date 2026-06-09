@@ -192,7 +192,37 @@
 		<aside class="panel panel-wide">
 			<fieldset>
 				<legend>Assistent</legend>
-				<div id="wizard" class="muted">Kommt als Nächstes: geführter Ablauf (Flaschen wählen → Zieltiefe → Ergebnis / max. Grundzeit).</div>
+				<ol class="wiz-nav">
+					<li class="active" data-s="1">1 · Flaschen</li>
+					<li data-s="2">2 · Tiefe &amp; Modus</li>
+					<li data-s="3">3 · Ergebnis</li>
+				</ol>
+
+				<div class="wiz-step active" data-step="1">
+					<p class="muted">Welche Flaschen nimmst du mit? (aus deinem Inventar — unter „Ausrüstung" pflegen)</p>
+					<div id="wizCyl"></div>
+					<div class="wiz-btns"><button class="add wiz-go" data-to="2">Weiter →</button></div>
+				</div>
+
+				<div class="wiz-step" data-step="2">
+					<label class="row">Kreislauf
+						<select id="wizMode"><option value="oc">Offen (OC)</option><option value="ccr">Kreislaufgerät (CCR)</option></select>
+					</label>
+					<div class="gf-row">
+						<label>Zieltiefe (m) <input id="wizDepth" type="number" min="6" max="120" value="40"></label>
+						<label>geplante Grundzeit (min) <input id="wizTime" type="number" min="0" max="200" value="20"></label>
+					</div>
+					<div class="wiz-btns"><button class="add wiz-go" data-to="1">← Zurück</button><button class="add wiz-go" data-to="3">Weiter →</button></div>
+				</div>
+
+				<div class="wiz-step" data-step="3">
+					<div class="wiz-btns">
+						<button id="wizMaxTime" class="add">Wie lange kann ich bleiben?</button>
+						<button id="wizNeed" class="add">Welche Gase brauche ich?</button>
+					</div>
+					<div id="wizResult" class="bestresult"></div>
+					<div class="wiz-btns"><button class="add wiz-go" data-to="2">← Zurück</button><button id="wizApply" class="share">Als Profil in die Planung übernehmen</button></div>
+				</div>
 			</fieldset>
 		</aside>
 	</main>

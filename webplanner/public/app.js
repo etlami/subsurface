@@ -289,18 +289,22 @@ function persistAndRefresh() { saveGear(); renderPicker(); rebuildCylinders(); r
 
 // --- cylinder picker (Planung) ----------------------------------------------
 function renderPicker() {
-	const wrap = $('cylPicker'); if (!wrap) return;
-	if (!state.inventory.length) { wrap.innerHTML = '<span class="muted">Inventar unter „Ausrüstung" anlegen.</span>'; return; }
-	wrap.innerHTML = state.inventory.map((c, i) => {
-		const roles = c.roles.map((r) => (ROLES.find((x) => x[0] === r) || [])[1]).filter(Boolean).join(', ');
-		return `<label class="pick-row"><input type="checkbox" data-i="${i}" ${state.selected.has(i) ? 'checked' : ''}>
-			<span class="gas-dot" style="background:${gasColor(i)}"></span>
-			<b>${gasName(c)}</b> <span class="muted">${c.label || ''} · ${(c.size_ml / 1000).toFixed(1)} L${roles ? ' · ' + roles : ''}</span></label>`;
-	}).join('');
-	wrap.querySelectorAll('input[data-i]').forEach((cb) => cb.addEventListener('change', () => {
-		const i = +cb.dataset.i; if (cb.checked) state.selected.add(i); else state.selected.delete(i);
-		rebuildCylinders(); renderSelectedGas(); recompute();
-	}));
+	const html = !state.inventory.length
+		? '<span class="muted">Inventar unter „Ausrüstung" anlegen.</span>'
+		: state.inventory.map((c, i) => {
+			const roles = c.roles.map((r) => (ROLES.find((x) => x[0] === r) || [])[1]).filter(Boolean).join(', ');
+			return `<label class="pick-row"><input type="checkbox" data-i="${i}" ${state.selected.has(i) ? 'checked' : ''}>
+				<span class="gas-dot" style="background:${gasColor(i)}"></span>
+				<b>${gasName(c)}</b> <span class="muted">${c.label || ''} · ${(c.size_ml / 1000).toFixed(1)} L${roles ? ' · ' + roles : ''}</span></label>`;
+		}).join('');
+	for (const id of ['cylPicker', 'wizCyl']) {
+		const wrap = $(id); if (!wrap) continue;
+		wrap.innerHTML = html;
+		wrap.querySelectorAll('input[data-i]').forEach((cb) => cb.addEventListener('change', () => {
+			const i = +cb.dataset.i; if (cb.checked) state.selected.add(i); else state.selected.delete(i);
+			rebuildCylinders(); renderSelectedGas(); renderPicker(); recompute();
+		}));
+	}
 }
 
 // --- selected-point gas (uses the dive's cylinders) -------------------------
@@ -336,10 +340,7 @@ function ownedWithGas(o2, he) {
 	const m = state.inventory.find((c) => Math.abs(c.o2_permille - o2) < 20 && Math.abs(c.he_permille - he) < 30);
 	return m ? `${gasName(m)} (${m.label || (m.size_ml / 1000).toFixed(1) + ' L'})` : null;
 }
-function suggestPlanGases() {
-	const wp = editor.getWaypoints();
-	const D = wp.length ? Math.max(...wp.map((w) => w.depth)) / 1000 : 0;
-	if (!D) { $('bestresult').textContent = 'Erst ein Profil zeichnen.'; return; }
+function suggestHTML(D) {
 	let need;
 	if (state.dive_mode === 1) need = [{ g: ccrDiluent(D), r: 'Diluent' }, ...ccrBailoutLadder(D).map((g) => ({ g, r: 'Bailout' }))];
 	else need = [{ g: ocBottomGas(D), r: 'Bottom' }, ...ocDecoSet(D).map((g) => ({ g, r: 'Deko' }))];
@@ -347,8 +348,13 @@ function suggestPlanGases() {
 		const owned = ownedWithGas(g.o2_permille, g.he_permille);
 		return `${r}: <b>${gasName(g)}</b> — ${owned ? 'im Inventar: ' + owned : '<span class="o2-err">nicht im Inventar</span>'}`;
 	});
-	$('bestresult').innerHTML = `Empfohlen für ${D.toFixed(0)} m (${state.dive_mode === 1 ? 'CCR' : 'OC'}):<br>` + lines.join('<br>') +
-		'<br><span class="muted">Fehlende Gase unter „Ausrüstung" ergänzen, dann oben anhaken.</span>';
+	return `Empfohlen für ${D.toFixed(0)} m (${state.dive_mode === 1 ? 'CCR' : 'OC'}):<br>` + lines.join('<br>') +
+		'<br><span class="muted">Fehlende Gase unter „Ausrüstung" ergänzen, dann anhaken.</span>';
+}
+function suggestPlanGases() {
+	const wp = editor.getWaypoints();
+	const D = wp.length ? Math.max(...wp.map((w) => w.depth)) / 1000 : 0;
+	$('bestresult').innerHTML = D ? suggestHTML(D) : 'Erst ein Profil zeichnen.';
 }
 function suggestBestMix() {
 	const d = Math.max(0, parseFloat($('bestdepth').value) || 0);
@@ -495,18 +501,63 @@ function bindSettings() {
 	const chk = (id, key) => set(id, (e) => { S()[key] = e.checked ? 1 : 0; });
 	chk('laststop', 'last_stop_6m'); chk('safetystop', 'safetystop'); chk('dropstone', 'drop_stone'); chk('switchreq', 'switch_at_req_stop'); chk('o2breaks', 'doo2breaks');
 	$('algo').addEventListener('change', () => { S().deco_mode = parseInt($('algo').value, 10) || 0; document.body.classList.toggle('is-vpmb', S().deco_mode === 2); saveGear(); recompute(); });
-	$('mode').addEventListener('change', () => { state.dive_mode = $('mode').value === 'ccr' ? 1 : 0; document.body.classList.toggle('is-ccr', state.dive_mode === 1); rebuildCylinders(); renderSelectedGas(); recompute(); });
+	$('mode').addEventListener('change', () => setMode($('mode').value === 'ccr' ? 1 : 0));
 	$('bailout').addEventListener('change', () => { state.dobailout = $('bailout').checked ? 1 : 0; recompute(); });
 }
 
 // --- tabs -------------------------------------------------------------------
-function bindTabs() {
-	document.querySelectorAll('.tab-btn').forEach((b) => b.addEventListener('click', () => {
-		document.querySelectorAll('.tab-btn').forEach((x) => x.classList.toggle('active', x === b));
-		const t = b.dataset.tab;
-		document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + t));
-		if (t === 'plan') editor.resize();
-	}));
+function showTab(t) {
+	document.querySelectorAll('.tab-btn').forEach((x) => x.classList.toggle('active', x.dataset.tab === t));
+	document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + t));
+	if (t === 'plan') editor.resize();
+}
+function bindTabs() { document.querySelectorAll('.tab-btn').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab))); }
+
+// Set OC/CCR mode everywhere (Planung + Assistent in sync).
+function setMode(m) {
+	state.dive_mode = m;
+	document.body.classList.toggle('is-ccr', m === 1);
+	if ($('mode')) $('mode').value = m === 1 ? 'ccr' : 'oc';
+	if ($('wizMode')) $('wizMode').value = m === 1 ? 'ccr' : 'oc';
+	rebuildCylinders(); renderSelectedGas(); recompute();
+}
+
+// --- wizard -----------------------------------------------------------------
+let wizApplyProfile = null; // {depthMm, timeS}
+function wizShowStep(s) {
+	document.querySelectorAll('#view-wizard .wiz-step').forEach((el) => el.classList.toggle('active', el.dataset.step === s));
+	document.querySelectorAll('.wiz-nav li').forEach((li) => li.classList.toggle('active', li.dataset.s === s));
+}
+function wizWaypoints(depthM, timeMin) {
+	const descS = Math.max(1, Math.round(depthM * 1000 / S().descrate_mmps));
+	return [{ time: descS, depth: depthM * 1000, cyl: 0 }, { time: descS + Math.max(0, timeMin) * 60, depth: depthM * 1000, cyl: 0 }];
+}
+function bindWizard() {
+	document.querySelectorAll('.wiz-go').forEach((b) => b.addEventListener('click', () => wizShowStep(b.dataset.to)));
+	$('wizMode').addEventListener('change', () => setMode($('wizMode').value === 'ccr' ? 1 : 0));
+	$('wizMaxTime').addEventListener('click', () => {
+		const d = parseFloat($('wizDepth').value) || 0;
+		const r = maxBottomTime(d);
+		if (!r) { $('wizResult').textContent = 'Tiefe eingeben.'; return; }
+		if (r.fail0) { $('wizResult').innerHTML = `<span class="o2-err">Schon 0 min nicht möglich</span>.`; wizApplyProfile = null; return; }
+		const t = r.capped ? MAXT_MIN : r.t;
+		wizApplyProfile = { depthM: d, timeMin: t };
+		$('wizResult').innerHTML = r.capped
+			? `> ${MAXT_MIN} min auf ${d} m <span class="muted">(kein Limit im Bereich)</span>`
+			: `Du kannst <b>${r.t} min</b> auf ${d} m bleiben — limitiert durch <b>${r.reason}</b>.`;
+	});
+	$('wizNeed').addEventListener('click', () => {
+		const d = parseFloat($('wizDepth').value) || 0;
+		const t = parseFloat($('wizTime').value) || 0;
+		if (!d) { $('wizResult').textContent = 'Tiefe eingeben.'; return; }
+		wizApplyProfile = { depthM: d, timeMin: t };
+		$('wizResult').innerHTML = suggestHTML(d);
+	});
+	$('wizApply').addEventListener('click', () => {
+		if (!wizApplyProfile) { $('wizResult').textContent = 'Erst berechnen.'; return; }
+		editor.setWaypoints(wizWaypoints(wizApplyProfile.depthM, wizApplyProfile.timeMin), false);
+		showTab('plan'); renderSelectedGas(); recompute();
+	});
 }
 
 // --- debounced recompute ----------------------------------------------------
@@ -519,6 +570,7 @@ editor.onSelect = (sel) => renderSelected(sel);
 
 bindTabs();
 bindSettings();
+bindWizard();
 $('snap').addEventListener('change', () => editor.setSnap($('snap').checked));
 $('selGas').addEventListener('change', () => editor.setSelectedGas(parseInt($('selGas').value, 10)));
 $('delPoint').addEventListener('click', () => editor.deleteSelected());
