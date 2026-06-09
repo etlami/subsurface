@@ -26,17 +26,39 @@
 
 	<!-- ============================ PLANUNG ============================ -->
 	<main id="view-plan" class="view active">
-		<section class="profile-pane">
-			<div class="hint">Klicken zum Setzen · Punkt ziehen zum Verschieben · Doppelklick/Rechtsklick zum Löschen</div>
-			<canvas id="profile"></canvas>
-			<div id="summary" class="summary">…</div>
-			<div id="selpoint" class="selpoint hidden">
-				<span class="sel-label">Punkt:</span>
-				<span id="selInfo"></span>
-				<label class="sel-gas">Gas <select id="selGas"></select></label>
-				<button id="delPoint" class="del-point" title="Ausgewählten Punkt löschen">Löschen</button>
+		<div class="plan-main">
+			<section class="profile-pane">
+				<div class="hint">Klicken zum Setzen · Punkt ziehen zum Verschieben · Doppelklick/Rechtsklick zum Löschen</div>
+				<canvas id="profile"></canvas>
+				<div id="summary" class="summary">…</div>
+				<div id="selpoint" class="selpoint hidden">
+					<span class="sel-label">Punkt:</span>
+					<span id="selInfo"></span>
+					<label class="sel-gas">Gas <select id="selGas"></select></label>
+					<button id="delPoint" class="del-point" title="Ausgewählten Punkt löschen">Löschen</button>
+				</div>
+			</section>
+
+			<div class="plan-results">
+				<fieldset>
+					<legend>Ergebnis</legend>
+					<div id="stops"></div>
+					<div id="gas" class="mt"></div>
+					<div id="mingas" class="mt"></div>
+				</fieldset>
+
+				<fieldset>
+					<legend>Warnungen</legend>
+					<div id="warnings"></div>
+				</fieldset>
+
+				<fieldset>
+					<legend>Variationen</legend>
+					<button id="calcvar" class="add">Berechnen (+5 min / +3 m)</button>
+					<div id="variations" class="muted"></div>
+				</fieldset>
 			</div>
-		</section>
+		</div>
 
 		<aside class="panel">
 			<fieldset>
@@ -74,24 +96,6 @@
 					<button id="calcmax" class="add">Berechnen</button>
 				</div>
 				<div id="maxresult" class="bestresult"></div>
-			</fieldset>
-
-			<fieldset>
-				<legend>Ergebnis</legend>
-				<div id="stops"></div>
-				<div id="gas" class="mt"></div>
-				<div id="mingas" class="mt"></div>
-			</fieldset>
-
-			<fieldset>
-				<legend>Warnungen</legend>
-				<div id="warnings"></div>
-			</fieldset>
-
-			<fieldset>
-				<legend>Variationen</legend>
-				<button id="calcvar" class="add">Berechnen (+5 min / +3 m)</button>
-				<div id="variations" class="muted"></div>
 			</fieldset>
 		</aside>
 	</main>

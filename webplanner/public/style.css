@@ -72,6 +72,17 @@ header .sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
 #view-gear.active, #view-wizard.active { grid-template-columns: 1fr; }
 .panel-wide { width: 100%; }
 
+/* planning: left column stacks the profile and, beneath it, the result
+   cards (Ergebnis / Warnungen / Variationen) flowing across the wide area */
+.plan-main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.plan-results {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+	gap: 12px;
+	align-items: start;
+}
+.plan-results fieldset { margin: 0; }
+
 /* gear page: flow the small setting cards into a responsive multi-column grid
    instead of one tall full-width stack (keeps inputs from sprawling) */
 aside.gear-grid {
