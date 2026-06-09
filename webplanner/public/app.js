@@ -376,6 +376,50 @@ function computeVariations() {
 	$('variations').innerHTML = `Laufzeit ${Math.round(base / 60)} min<br>+5 min Grund → ${fmtDelta(runtimeFor(wpT) - base)}<br>+3 m Tiefe → ${fmtDelta(runtimeFor(wpD) - base)}`;
 }
 
+// --- max bottom time at a depth with the selected gases ---------------------
+// Binary-searches the bottom time; each candidate is planned and checked
+// against gas supply (rule of thirds for back gas, 3/4 for stages) and CNS.
+const MAXT_MIN = 300;
+function evalBottom(depthM, Tmin) {
+	const descS = Math.max(1, Math.round(depthM * 1000 / S().descrate_mmps));
+	const t1 = descS + Math.max(0, Tmin) * 60;
+	const r = runPlan([{ time: descS, depth: depthM * 1000, cyl: 0 }, { time: t1, depth: depthM * 1000, cyl: 0 }]);
+	let gasOk = true, limCyl = -1, worst = 1;
+	for (let i = 0; i < r.gas.size(); i++) {
+		const g = r.gas.get(i);
+		if (g.cylinderid >= state.cylinders.length) continue;
+		const c = state.cylinders[g.cylinderid];
+		const capL = c.size_ml / 1000 * c.workingpressure_mbar / 1000;
+		const frac = g.cylinderid === 0 ? 2 / 3 : 0.75;
+		const ratio = capL > 0 ? (g.gas_used_ml / 1000) / (capL * frac) : 9;
+		if (ratio > 1 && ratio > worst) { gasOk = false; limCyl = g.cylinderid; worst = ratio; }
+	}
+	return { ok: r.error === 0 && gasOk && r.cns < 100, gasOk, cnsOk: r.cns < 100, cns: r.cns, limCyl, err: r.error };
+}
+function maxBottomTime(depthM) {
+	if (depthM <= 0) return null;
+	if (!evalBottom(depthM, 0).ok) return { fail0: true, e: evalBottom(depthM, 0) };
+	if (evalBottom(depthM, MAXT_MIN).ok) return { t: MAXT_MIN, capped: true };
+	let lo = 0, hi = MAXT_MIN;
+	while (hi - lo > 1) { const m = Math.floor((lo + hi) / 2); if (evalBottom(depthM, m).ok) lo = m; else hi = m; }
+	const b = evalBottom(depthM, hi);
+	let reason = 'Gas/CNS';
+	if (!b.cnsOk) reason = `CNS (${b.cns} %)`;
+	else if (!b.gasOk) reason = `Gas: ${gasName(state.cylinders[b.limCyl])}`;
+	else if (b.err) reason = 'Planer';
+	return { t: lo, reason };
+}
+function showMaxBottomTime() {
+	const d = parseFloat($('maxdepth').value) || 0;
+	const r = maxBottomTime(d);
+	const el = $('maxresult');
+	if (!r) { el.textContent = 'Tiefe eingeben.'; return; }
+	if (r.fail0) { el.innerHTML = `<span class="o2-err">Schon 0 min nicht möglich</span> (${!r.e.cnsOk ? 'CNS' : 'Gas'} reicht nicht).`; return; }
+	el.innerHTML = r.capped
+		? `> ${MAXT_MIN} min auf ${d} m <span class="muted">(kein Limit im Bereich)</span>`
+		: `max. <b>${r.t} min</b> Grundzeit auf ${d} m — limitiert durch <b>${r.reason}</b>`;
+}
+
 // --- saved plans + share ----------------------------------------------------
 function encodeState() {
 	const obj = {
@@ -489,6 +533,7 @@ $('suggestplan').addEventListener('click', suggestPlanGases);
 $('bestdeco').addEventListener('click', suggestDecoGases);
 $('bestmix').addEventListener('click', suggestBestMix);
 $('calcvar').addEventListener('click', computeVariations);
+$('calcmax').addEventListener('click', showMaxBottomTime);
 
 const fromHash = location.hash.length > 1 ? applyDecoded(decodeState(location.hash.slice(1))) : false;
 if (!fromHash) rebuildCylinders();
