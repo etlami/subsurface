@@ -1,0 +1,7 @@
+// AI-generated (Claude)
+// Minimal <QtGlobal> stub for the WASM build. Core files include it only for
+// the QT_TRANSLATE_NOOP macro, which our <QObject> stub already provides.
+#ifndef SUBSURFACE_WASM_QTGLOBAL_STUB
+#define SUBSURFACE_WASM_QTGLOBAL_STUB
+#include <QObject>
+#endif

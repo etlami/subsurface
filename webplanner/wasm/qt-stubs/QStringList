@@ -1,0 +1,12 @@
+// AI-generated (Claude)
+// Minimal <QStringList> stub for the WASM build. Referenced only in
+// declarations (filter-preset headers pulled in transitively via pref.cpp);
+// none of those functions run on the planner path.
+#ifndef SUBSURFACE_WASM_QSTRINGLIST_STUB
+#define SUBSURFACE_WASM_QSTRINGLIST_STUB
+#include <QString>
+class QStringList {
+public:
+	QStringList() = default;
+};
+#endif

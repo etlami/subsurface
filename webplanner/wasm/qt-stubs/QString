@@ -1,0 +1,21 @@
+// AI-generated (Claude)
+// Minimal <QString> stub for the WASM build of the Subsurface planner core.
+// Several core headers (format.h, fulltext.h) DECLARE functions that take or
+// return QString, but the planner translation units we compile never actually
+// construct or call QString. We only need the type to exist so those
+// declarations parse. Any QString-returning function that is referenced ends
+// up as an undefined symbol resolved by a link-time no-op stub.
+#ifndef SUBSURFACE_WASM_QSTRING_STUB
+#define SUBSURFACE_WASM_QSTRING_STUB
+
+#include <string>
+
+class QString {
+public:
+	QString() = default;
+	QString(const char *) {}
+	std::string toStdString() const { return {}; }
+	const char *toUtf8() const { return ""; }
+};
+
+#endif

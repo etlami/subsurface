@@ -1,0 +1,12 @@
+// AI-generated (Claude)
+// Minimal <QVector> stub for the WASM build. Used only as a member type in
+// filter-related structs reached transitively through pref.cpp; never touched
+// on the planner path.
+#ifndef SUBSURFACE_WASM_QVECTOR_STUB
+#define SUBSURFACE_WASM_QVECTOR_STUB
+template <typename T>
+class QVector {
+public:
+	QVector() = default;
+};
+#endif
