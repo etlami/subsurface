@@ -50,7 +50,7 @@ function defaultSettings() {
 		surface_pressure_mbar: 1013, salinity: 10300, gflow: 30, gfhigh: 75, vpmb_conservatism: 3,
 		deco_mode: 0, bottomsac_mlpm: 20000, decosac_mlpm: 17000,
 		descrate_mmps: 18000 / 60, ascrate_mmps: 9000 / 60, ascratelast6m_mmps: 9000 / 60,
-		last_stop_6m: 0, safetystop: 1, switch_at_req_stop: 1, min_switch_duration_s: 60, doo2breaks: 0,
+		last_stop_6m: 0, safetystop: 1, switch_at_req_stop: 0, min_switch_duration_s: 60, doo2breaks: 0,
 		sacfactor: 400, problemsolvingtime_min: 4, reserve_gas_mbar: 40000,
 		ppo2_limit: 1.6, ppo2_working: 1.4, end_limit_m: 30, drop_stone: 0,
 		sp_low_mbar: 700, sp_high_mbar: 1300, sp_switch_depth_mm: 21000, sp_deco_mbar: 1600, sp_deco_depth_mm: 6000,
@@ -102,13 +102,17 @@ function rebuildCylinders() {
 
 // --- segment building (OC + CCR) -------------------------------------------
 const OC_GAS = 0, DILUENT = 1;
-function buildSegments(waypoints) {
+function buildSegments(waypoints, opts = {}) {
 	const ccr = state.dive_mode === 1;
 	const cylinders = state.cylinders.map((c) => ({ ...c, cylinder_use: OC_GAS, description: '' }));
 	const segs = [];
 	if (!ccr) {
-		for (let i = 1; i < cylinders.length; i++)
-			segs.push({ time_incr_s: 0, depth_mm: modMm(cylinders[i].o2_permille, S().ppo2_limit), cylinderid: i, setpoint_mbar: 0, divemode: 0, entered: true });
+		// Leading zero-time segments at each gas's MOD declare the deco/switch
+		// gases to the planner (analyze_gaslist only switches at these). Omitting
+		// them keeps the ascent on the bottom gas (e.g. on a no-deco dive).
+		if (opts.withDecoGas !== false)
+			for (let i = 1; i < cylinders.length; i++)
+				segs.push({ time_incr_s: 0, depth_mm: modMm(cylinders[i].o2_permille, S().ppo2_limit), cylinderid: i, setpoint_mbar: 0, divemode: 0, entered: true });
 		let prev = 0, first = true;
 		for (const w of waypoints) {
 			let incr = Math.max(0, w.time - prev);
@@ -170,8 +174,8 @@ function params() {
 	};
 }
 
-function runPlan(waypoints) {
-	const built = buildSegments(waypoints);
+function runPlan(waypoints, opts) {
+	const built = buildSegments(waypoints, opts);
 	const cv = new Module.CylinderVector(); built.cylinders.forEach((c) => cv.push_back(c));
 	const sv = new Module.SegmentVector(); built.segments.forEach((s) => sv.push_back(s));
 	try { return Module.runPlan(params(), cv, sv); }
@@ -203,6 +207,12 @@ function setpointMarkers(samples) {
 function calculate(waypoints) {
 	let res;
 	try { res = runPlan(waypoints); } catch (e) { $('summary').textContent = 'Fehler: ' + e; console.error(e); return; }
+	// Classically you don't switch to deco gas on a no-stop dive. If the plan
+	// has no required deco stops (OC), recompute the ascent on the bottom gas.
+	const decoStopCount = (r) => { let n = 0; for (let i = 0; i < r.stops.size(); i++) if (r.stops.get(i).time_s > 0) n++; return n; };
+	if (state.dive_mode !== 1 && state.cylinders.length > 1 && decoStopCount(res) === 0) {
+		try { const r2 = runPlan(waypoints, { withDecoGas: false }); if (decoStopCount(r2) === 0) res = r2; } catch { /* keep res */ }
+	}
 	const samples = [];
 	for (let i = 0; i < res.samples.size(); i++) { const s = res.samples.get(i); samples.push({ time_s: s.time_s, depth_mm: s.depth_mm, stopdepth_mm: s.stopdepth_mm, ceiling_mm: s.ceiling_mm, setpoint_mbar: s.setpoint_mbar, in_deco: s.in_deco }); }
 	editor.setComputed({ samples, switches: gasSwitches(res), stops: decoStopMarkers(samples), setpointDepthMm: null, spMarkers: state.dive_mode === 1 ? setpointMarkers(samples) : [] });
