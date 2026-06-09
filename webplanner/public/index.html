@@ -56,11 +56,15 @@
 					</select>
 				</label>
 				<div class="gf-row ccr-only">
-					<label>SP low (bar) <input id="spLow" type="number" min="0.4" max="1.6" step="0.1" value="0.7"></label>
-					<label>SP high (bar) <input id="spHigh" type="number" min="0.4" max="1.6" step="0.1" value="1.2"></label>
+					<label>Start-SP (bar) <input id="spLow" type="number" min="0.4" max="1.6" step="0.1" value="0.7"></label>
+					<label>Bottom-SP (bar) <input id="spHigh" type="number" min="0.4" max="1.6" step="0.1" value="1.3"></label>
 				</div>
-				<label class="row ccr-only">SP-Wechseltiefe (m)
+				<label class="row ccr-only">→ Bottom-SP ab Tiefe (m)
 					<input id="spSwitch" type="number" min="0" max="100" value="21"></label>
+				<div class="gf-row ccr-only">
+					<label>Deko-SP (bar) <input id="spDeco" type="number" min="0.4" max="1.6" step="0.1" value="1.6"></label>
+					<label>Deko-SP ab Tiefe (m) <input id="spDecoDepth" type="number" min="0" max="30" value="6"></label>
+				</div>
 			</fieldset>
 
 			<fieldset>

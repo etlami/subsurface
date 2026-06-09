@@ -25,9 +25,11 @@ const defaultState = () => ({
 	ppo2_working: 1.4,         // working-gas MOD limit (for warnings)
 	end_limit_m: 30,           // narcosis (END) warning threshold
 	dive_mode: 0,              // 0 = OC, 1 = CCR
-	sp_low_mbar: 700,          // CCR low setpoint (shallow)
-	sp_high_mbar: 1200,        // CCR high setpoint (deep)
-	sp_switch_depth_mm: 21000, // depth at/below which the high setpoint applies
+	sp_low_mbar: 700,          // start/descent setpoint
+	sp_high_mbar: 1300,        // bottom setpoint (reached on descent, kept on ascent)
+	sp_switch_depth_mm: 21000, // descent depth where low -> high
+	sp_deco_mbar: 1600,        // deco setpoint
+	sp_deco_depth_mm: 6000,    // ascent depth where the deco setpoint applies
 	cylinders: [
 		{ o2_permille: 210, he_permille: 0, size_ml: 24000, workingpressure_mbar: 232000 }, // back gas (air)
 		{ o2_permille: 500, he_permille: 0, size_ml: 11100, workingpressure_mbar: 232000 }, // EAN50 deco
@@ -66,15 +68,16 @@ function decoStopMarkers(samples) {
 	return out;
 }
 
-// CCR setpoint-change markers: where the profile crosses the switch depth.
+// CCR setpoint-change markers from the actual per-sample setpoint computed by
+// the planner (so they reflect the real switch points, including the deco SP).
 function setpointMarkers(samples) {
-	const sw = state.sp_switch_depth_mm;
 	const out = [];
-	for (let i = 1; i < samples.length; i++) {
-		const a = samples[i - 1].depth_mm, b = samples[i].depth_mm;
-		if ((a < sw) !== (b < sw)) {
-			const sp = (b >= sw ? state.sp_high_mbar : state.sp_low_mbar) / 1000;
-			out.push({ time_s: samples[i].time_s, depth_mm: b, label: `SP ${sp.toFixed(1)}` });
+	let last = -1;
+	for (let i = 0; i < samples.length; i++) {
+		const sp = samples[i].setpoint_mbar || 0;
+		if (sp > 0 && sp !== last) {
+			out.push({ time_s: samples[i].time_s, depth_mm: samples[i].depth_mm, label: `SP ${(sp / 1000).toFixed(1)}` });
+			last = sp;
 		}
 	}
 	return out;
@@ -110,33 +113,58 @@ function modMm(o2_permille, ppo2_limit) {
 // Build planner segments. Each drawn waypoint breathes its assigned cylinder.
 // Every non-back cylinder is also registered with a zero-duration point at its
 // MOD so the planner can auto-switch to it on ascent (mirrors testplan.cpp).
+// Returns { segments, cylinders } — cylinders may gain a synthetic "SP x.x"
+// setpoint-change cylinder for CCR deco, which is how Subsurface models a
+// setpoint switch on ascent (see core/planner.cpp::setpoint_change).
+const OC_GAS = 0, DILUENT = 1;
 function buildSegments(waypoints) {
 	const ccr = state.dive_mode === 1;
-	const dm = ccr ? 1 : 0;
-	const spFor = (depth_mm) => (depth_mm >= state.sp_switch_depth_mm ? state.sp_high_mbar : state.sp_low_mbar);
+	// Normalise: every cylinder object must carry all embind fields.
+	const cylinders = state.cylinders.map((c) => ({
+		o2_permille: c.o2_permille, he_permille: c.he_permille, size_ml: c.size_ml,
+		workingpressure_mbar: c.workingpressure_mbar,
+		cylinder_use: ccr ? DILUENT : OC_GAS, description: '',
+	}));
 	const segs = [];
-	// Open-circuit only: register deco/travel gases at their MOD so the planner
-	// can auto-switch on ascent. On CCR the loop maintains the setpoint with the
-	// diluent, so we don't register OC deco gases.
+
 	if (!ccr) {
-		for (let i = 1; i < state.cylinders.length; i++) {
-			segs.push({
-				time_incr_s: 0,
-				depth_mm: modMm(state.cylinders[i].o2_permille, state.ppo2_limit),
-				cylinderid: i, setpoint_mbar: 0, divemode: 0, entered: true,
-			});
+		// OC: register deco/travel gases at their MOD for auto gas switching.
+		for (let i = 1; i < cylinders.length; i++) {
+			segs.push({ time_incr_s: 0, depth_mm: modMm(cylinders[i].o2_permille, state.ppo2_limit), cylinderid: i, setpoint_mbar: 0, divemode: 0, entered: true });
 		}
+		let prev = 0;
+		for (const w of waypoints) {
+			segs.push({ time_incr_s: Math.max(0, w.time - prev), depth_mm: w.depth, cylinderid: Math.min(w.cyl || 0, cylinders.length - 1), setpoint_mbar: 0, divemode: 0, entered: true });
+			prev = w.time;
+		}
+		return { segments: segs, cylinders };
 	}
-	let prev = 0;
+
+	// CCR: register a deco setpoint change as an "SP x.x" diluent cylinder at its
+	// depth; the planner switches the loop setpoint there on ascent.
+	const dilId = Math.min(/* diluent = first cylinder */ 0, cylinders.length - 1);
+	if (state.sp_deco_mbar > 0) {
+		const dil = cylinders[dilId];
+		cylinders.push({ o2_permille: dil.o2_permille, he_permille: dil.he_permille, size_ml: dil.size_ml, workingpressure_mbar: dil.workingpressure_mbar, cylinder_use: DILUENT, description: `SP ${(state.sp_deco_mbar / 1000).toFixed(1)}` });
+		segs.push({ time_incr_s: 0, depth_mm: state.sp_deco_depth_mm, cylinderid: cylinders.length - 1, setpoint_mbar: 0, divemode: 1, entered: true });
+	}
+
+	// Entered legs: start on the low setpoint, switch to high once the descent
+	// crosses the switch depth, then keep high (the planner persists it on the
+	// way up; the deco SP above kicks in at its depth during the ascent).
+	let prevT = 0, prevD = 0, sp = state.sp_low_mbar, high = false;
+	const sw = state.sp_switch_depth_mm;
 	for (const w of waypoints) {
-		segs.push({
-			time_incr_s: Math.max(0, w.time - prev), depth_mm: w.depth,
-			cylinderid: Math.min(w.cyl || 0, state.cylinders.length - 1),
-			setpoint_mbar: ccr ? spFor(w.depth) : 0, divemode: dm, entered: true,
-		});
-		prev = w.time;
+		if (!high && prevD < sw && w.depth >= sw && w.time > prevT) {
+			const tc = Math.round(prevT + (w.time - prevT) * (sw - prevD) / (w.depth - prevD));
+			segs.push({ time_incr_s: Math.max(0, tc - prevT), depth_mm: sw, cylinderid: dilId, setpoint_mbar: sp, divemode: 1, entered: true });
+			prevT = tc; prevD = sw; sp = state.sp_high_mbar; high = true;
+		}
+		if (w.depth >= sw) { sp = state.sp_high_mbar; high = true; }
+		segs.push({ time_incr_s: Math.max(0, w.time - prevT), depth_mm: w.depth, cylinderid: dilId, setpoint_mbar: sp, divemode: 1, entered: true });
+		prevT = w.time; prevD = w.depth;
 	}
-	return segs;
+	return { segments: segs, cylinders };
 }
 
 let v_track = [];
@@ -145,9 +173,9 @@ function freeVecs() { v_track.forEach((v) => v.delete()); v_track = []; }
 
 // --- the calculation --------------------------------------------------------
 function calculate(waypoints) {
-	const segs = buildSegments(waypoints);
-	const cylVec = toVec(Module.CylinderVector, state.cylinders);
-	const segVec = toVec(Module.SegmentVector, segs);
+	const built = buildSegments(waypoints);
+	const cylVec = toVec(Module.CylinderVector, built.cylinders);
+	const segVec = toVec(Module.SegmentVector, built.segments);
 	try {
 		renderResult(Module.runPlan(state.params, cylVec, segVec), waypoints);
 	} catch (err) {
@@ -164,7 +192,7 @@ function renderResult(res, waypoints) {
 	const samples = [];
 	for (let i = 0; i < res.samples.size(); i++) {
 		const s = res.samples.get(i);
-		samples.push({ time_s: s.time_s, depth_mm: s.depth_mm, stopdepth_mm: s.stopdepth_mm, ceiling_mm: s.ceiling_mm, in_deco: s.in_deco });
+		samples.push({ time_s: s.time_s, depth_mm: s.depth_mm, stopdepth_mm: s.stopdepth_mm, ceiling_mm: s.ceiling_mm, setpoint_mbar: s.setpoint_mbar, in_deco: s.in_deco });
 	}
 	const switches = [];
 	for (let i = 0; i < res.switches.size(); i++) {
@@ -175,7 +203,7 @@ function renderResult(res, waypoints) {
 		samples,
 		switches,
 		stops: decoStopMarkers(samples),
-		setpointDepthMm: state.dive_mode === 1 ? state.sp_switch_depth_mm : null,
+		setpointDepthMm: null,
 		spMarkers: state.dive_mode === 1 ? setpointMarkers(samples) : [],
 	});
 
@@ -192,6 +220,7 @@ function renderResult(res, waypoints) {
 	const gases = [];
 	for (let i = 0; i < res.gas.size(); i++) {
 		const g = res.gas.get(i);
+		if (g.cylinderid >= state.cylinders.length) continue; // skip synthetic SP cylinder
 		gases.push({ name: gasNames[g.cylinderid] || `Zyl ${g.cylinderid}`, used: g.gas_used_ml / 1000, deco: g.deco_gas_used_ml / 1000 });
 	}
 
@@ -227,18 +256,13 @@ function renderWarnings(waypoints) {
 	const endM = (he_permille, depth_mm) => (depth_mm / 1000 + 10) * (1 - he_permille / 1000) - 10;
 
 	if (ccr) {
-		// pO2 follows the setpoint (low above the switch depth, high below),
-		// capped by ambient when shallow.
-		const seen = new Set();
-		if (state.sp_high_mbar / 1000 > 1.6) out.push({ lvl: 'err', t: `High-Setpoint ${(state.sp_high_mbar / 1000).toFixed(2)} bar > 1,6 (Sauerstofftoxizität)` });
-		for (const w of waypoints) {
-			const sp = (w.depth >= state.sp_switch_depth_mm ? state.sp_high_mbar : state.sp_low_mbar) / 1000;
-			const po2 = Math.min(sp, ambBar(w.depth));
-			if (po2 < 0.18 && !seen.has('hyp')) {
-				out.push({ lvl: 'err', t: `Loop-pO₂ ${po2.toFixed(2)} bar auf ${(w.depth / 1000).toFixed(0)} m < 0,18 (hypoxisch)` });
-				seen.add('hyp');
-			}
-		}
+		// Each setpoint is capped by ambient pressure (you cannot hold a higher
+		// pO2 than the surrounding pressure provides).
+		[['Bottom', state.sp_high_mbar], ['Deko', state.sp_deco_mbar], ['Start', state.sp_low_mbar]].forEach(([n, mb]) => {
+			if (mb / 1000 > 1.6) out.push({ lvl: 'err', t: `${n}-Setpoint ${(mb / 1000).toFixed(2)} bar > 1,6 (Sauerstofftoxizität)` });
+		});
+		// Low setpoint hypoxic at the surface? (diluent flush concern)
+		if (state.sp_low_mbar / 1000 < 0.18) out.push({ lvl: 'err', t: `Start-Setpoint ${(state.sp_low_mbar / 1000).toFixed(2)} bar < 0,18 (hypoxisch)` });
 	} else {
 		for (const w of waypoints) {
 			const c = state.cylinders[w.cyl] || state.cylinders[0];
@@ -353,8 +377,10 @@ function bindParams() {
 		recompute();
 	});
 	$('spLow').addEventListener('change', () => { state.sp_low_mbar = Math.round((parseFloat($('spLow').value) || 0.7) * 1000); recompute(); });
-	$('spHigh').addEventListener('change', () => { state.sp_high_mbar = Math.round((parseFloat($('spHigh').value) || 1.2) * 1000); recompute(); });
+	$('spHigh').addEventListener('change', () => { state.sp_high_mbar = Math.round((parseFloat($('spHigh').value) || 1.3) * 1000); recompute(); });
 	$('spSwitch').addEventListener('change', () => { state.sp_switch_depth_mm = Math.round((parseFloat($('spSwitch').value) || 21) * 1000); recompute(); });
+	$('spDeco').addEventListener('change', () => { state.sp_deco_mbar = Math.round((parseFloat($('spDeco').value) || 1.6) * 1000); recompute(); });
+	$('spDecoDepth').addEventListener('change', () => { state.sp_deco_depth_mm = Math.round((parseFloat($('spDecoDepth').value) || 6) * 1000); recompute(); });
 	$('endlimit').addEventListener('change', () => { state.end_limit_m = Math.round(parseFloat($('endlimit').value) || 30); recompute(); });
 	$('bestmix').addEventListener('click', suggestBestMix);
 	$('export').addEventListener('click', exportPng);
@@ -420,6 +446,8 @@ function syncInputsFromState() {
 	$('spLow').value = (state.sp_low_mbar / 1000).toFixed(1);
 	$('spHigh').value = (state.sp_high_mbar / 1000).toFixed(1);
 	$('spSwitch').value = (state.sp_switch_depth_mm / 1000).toFixed(0);
+	$('spDeco').value = (state.sp_deco_mbar / 1000).toFixed(1);
+	$('spDecoDepth').value = (state.sp_deco_depth_mm / 1000).toFixed(0);
 	$('endlimit').value = state.end_limit_m;
 	document.body.classList.toggle('is-ccr', state.dive_mode === 1);
 }
@@ -432,7 +460,8 @@ function encodeState() {
 		w: editor.getWaypoints().map((w) => [w.time, w.depth, w.cyl || 0]),
 		c: state.cylinders.map((c) => [c.o2_permille, c.he_permille, c.size_ml, c.workingpressure_mbar]),
 		p: state.params,
-		m: state.dive_mode, spl: state.sp_low_mbar, sph: state.sp_high_mbar, spd: state.sp_switch_depth_mm, el: state.end_limit_m,
+		m: state.dive_mode, spl: state.sp_low_mbar, sph: state.sp_high_mbar, spd: state.sp_switch_depth_mm,
+		spdeco: state.sp_deco_mbar, spdd: state.sp_deco_depth_mm, el: state.end_limit_m,
 	};
 	return btoa(unescape(encodeURIComponent(JSON.stringify(obj)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
@@ -481,6 +510,8 @@ function restoreFromHash() {
 	if (typeof obj.spl === 'number') state.sp_low_mbar = obj.spl;
 	if (typeof obj.sph === 'number') state.sp_high_mbar = obj.sph;
 	if (typeof obj.spd === 'number') state.sp_switch_depth_mm = obj.spd;
+	if (typeof obj.spdeco === 'number') state.sp_deco_mbar = obj.spdeco;
+	if (typeof obj.spdd === 'number') state.sp_deco_depth_mm = obj.spdd;
 	if (typeof obj.el === 'number') state.end_limit_m = obj.el;
 	state.cylinders = obj.c.map((a) => ({ o2_permille: a[0], he_permille: a[1], size_ml: a[2], workingpressure_mbar: a[3] }));
 	editor.setWaypoints(obj.w.map((a) => ({ time: a[0], depth: a[1], cyl: a[2] || 0 })), false);
