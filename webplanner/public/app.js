@@ -335,27 +335,47 @@ function pickSizeMl(used_ml, wp_mbar, frac, minMl) {
 	for (const s of STD_SIZES_ML) if (s / 1000 >= need && s >= (minMl || 0)) return s;
 	return 30000;
 }
-// Find an owned inventory cylinder carrying ~this gas; returns its label or null.
-function ownedWithGas(o2, he) {
-	const m = state.inventory.find((c) => Math.abs(c.o2_permille - o2) < 20 && Math.abs(c.he_permille - he) < 30);
-	return m ? `${gasName(m)} (${m.label || (m.size_ml / 1000).toFixed(1) + ' L'})` : null;
+const ROLEKEY = { Bottom: 'bottom', Diluent: 'diluent', Deko: 'deco', Bailout: 'bailout' };
+// Inventory cylinder carrying ~this gas (composition match), or null.
+function ownedCyl(o2, he) { return state.inventory.find((c) => Math.abs(c.o2_permille - o2) < 20 && Math.abs(c.he_permille - he) < 30) || null; }
+// Same, formatted as a label for display.
+function ownedWithGas(o2, he) { const m = ownedCyl(o2, he); return m ? `${gasName(m)} (${m.label || (m.size_ml / 1000).toFixed(1) + ' L'})` : null; }
+
+// Recommended gases for a profile (from the tables) with the optimal cylinder
+// size (from computed gas use) and what the inventory already covers.
+function recommendation(waypoints) {
+	const D = waypoints.length ? Math.max(...waypoints.map((w) => w.depth)) / 1000 : 0;
+	const ccr = state.dive_mode === 1;
+	const recs = ccr
+		? [{ g: ccrDiluent(D), r: 'Diluent', back: true }, ...ccrBailoutLadder(D).map((g) => ({ g, r: 'Bailout' }))]
+		: [{ g: ocBottomGas(D), r: 'Bottom', back: true }, ...ocDecoSet(D).map((g) => ({ g, r: 'Deko' }))];
+	const temp = recs.map((x) => ({ o2_permille: x.g.o2_permille, he_permille: x.g.he_permille, size_ml: x.back ? 24000 : 11100, workingpressure_mbar: 232000 }));
+	const saved = state.cylinders; state.cylinders = temp;
+	const used = {};
+	try { const r = runPlan(waypoints); for (let i = 0; i < r.gas.size(); i++) { const g = r.gas.get(i); used[g.cylinderid] = g.gas_used_ml; } }
+	catch { /* ignore */ } finally { state.cylinders = saved; }
+	return { D, items: recs.map((x, i) => ({ role: x.r, g: x.g, optMl: pickSizeMl(used[i] || 0, 232000, x.back ? 2 / 3 : 0.75, x.back ? 7000 : 5700), owned: ownedCyl(x.g.o2_permille, x.g.he_permille) })) };
 }
-function suggestHTML(D) {
-	let need;
-	if (state.dive_mode === 1) need = [{ g: ccrDiluent(D), r: 'Diluent' }, ...ccrBailoutLadder(D).map((g) => ({ g, r: 'Bailout' }))];
-	else need = [{ g: ocBottomGas(D), r: 'Bottom' }, ...ocDecoSet(D).map((g) => ({ g, r: 'Deko' }))];
-	const lines = need.map(({ g, r }) => {
-		const owned = ownedWithGas(g.o2_permille, g.he_permille);
-		return `${r}: <b>${gasName(g)}</b> — ${owned ? 'im Inventar: ' + owned : '<span class="o2-err">nicht im Inventar</span>'}`;
+function renderSuggestion(waypoints, elId) {
+	const el = $(elId);
+	const D = waypoints.length ? Math.max(...waypoints.map((w) => w.depth)) / 1000 : 0;
+	if (!D) { el.textContent = 'Erst ein Profil / eine Tiefe wählen.'; return; }
+	const rec = recommendation(waypoints);
+	const lines = rec.items.map((it) => {
+		const head = `${it.role}: <b>${gasName(it.g)}</b> · mind. <b>${(it.optMl / 1000).toFixed(1)} L</b>`;
+		if (it.owned)
+			return `${head} · du hast: <b>${it.owned.label || gasName(it.owned)}</b> (${(it.owned.size_ml / 1000).toFixed(1)} L)`;
+		return `${head} · <span class="o2-err">nicht im Inventar</span> <button class="add addgas" data-o2="${it.g.o2_permille}" data-he="${it.g.he_permille}" data-role="${ROLEKEY[it.role] || 'deco'}" data-ml="${it.optMl}">+ ins Inventar</button>`;
 	});
-	return `Empfohlen für ${D.toFixed(0)} m (${state.dive_mode === 1 ? 'CCR' : 'OC'}):<br>` + lines.join('<br>') +
-		'<br><span class="muted">Fehlende Gase unter „Ausrüstung" ergänzen, dann anhaken.</span>';
+	el.innerHTML = `Empfohlen für ${rec.D.toFixed(0)} m (${state.dive_mode === 1 ? 'CCR' : 'OC'}):<br>` + lines.join('<br>');
+	el.querySelectorAll('.addgas').forEach((b) => b.addEventListener('click', () => {
+		state.inventory.push({ label: '', size_ml: +b.dataset.ml, wp_mbar: 232000, o2_permille: +b.dataset.o2, he_permille: +b.dataset.he, roles: [b.dataset.role], count: 1 });
+		state.selected.add(state.inventory.length - 1);
+		saveGear(); renderInventory(); renderPicker(); rebuildCylinders(); renderSelectedGas(); recompute();
+		renderSuggestion(waypoints, elId);
+	}));
 }
-function suggestPlanGases() {
-	const wp = editor.getWaypoints();
-	const D = wp.length ? Math.max(...wp.map((w) => w.depth)) / 1000 : 0;
-	$('bestresult').innerHTML = D ? suggestHTML(D) : 'Erst ein Profil zeichnen.';
-}
+function suggestPlanGases() { renderSuggestion(editor.getWaypoints(), 'bestresult'); }
 function suggestBestMix() {
 	const d = Math.max(0, parseFloat($('bestdepth').value) || 0);
 	let o2 = Math.max(5, Math.min(100, Math.floor((S().ppo2_working / (1 + d / 10)) * 100)));
@@ -551,7 +571,7 @@ function bindWizard() {
 		const t = parseFloat($('wizTime').value) || 0;
 		if (!d) { $('wizResult').textContent = 'Tiefe eingeben.'; return; }
 		wizApplyProfile = { depthM: d, timeMin: t };
-		$('wizResult').innerHTML = suggestHTML(d);
+		renderSuggestion(wizWaypoints(d, t), 'wizResult');
 	});
 	$('wizApply').addEventListener('click', () => {
 		if (!wizApplyProfile) { $('wizResult').textContent = 'Erst berechnen.'; return; }
