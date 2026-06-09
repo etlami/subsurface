@@ -168,6 +168,7 @@ function buildSegments(waypoints) {
 }
 
 let v_track = [];
+let lastDecoStops = []; // [{depth(m), time(min)}] of the last computed plan
 function toVec(Vec, arr) { const v = new Vec(); arr.forEach((x) => v.push_back(x)); v_track.push(v); return v; }
 function freeVecs() { v_track.forEach((v) => v.delete()); v_track = []; }
 
@@ -215,6 +216,7 @@ function renderResult(res, waypoints) {
 		const st = res.stops.get(i);
 		if (st.time_s > 0) stops.push({ depth: st.depth_mm / 1000, time: Math.round(st.time_s / 60) });
 	}
+	lastDecoStops = stops;
 
 	const gasNames = state.cylinders.map(gasName);
 	const gases = [];
@@ -383,8 +385,37 @@ function bindParams() {
 	$('spDecoDepth').addEventListener('change', () => { state.sp_deco_depth_mm = Math.round((parseFloat($('spDecoDepth').value) || 6) * 1000); recompute(); });
 	$('endlimit').addEventListener('change', () => { state.end_limit_m = Math.round(parseFloat($('endlimit').value) || 30); recompute(); });
 	$('bestmix').addEventListener('click', suggestBestMix);
+	$('bestdeco').addEventListener('click', suggestDecoGases);
 	$('export').addEventListener('click', exportPng);
 	$('print').addEventListener('click', () => window.print());
+	$('savePlan').addEventListener('click', savePlan);
+	$('loadPlan').addEventListener('click', loadSelectedPlan);
+	$('delPlan').addEventListener('click', deleteSelectedPlan);
+	$('delPoint').addEventListener('click', () => editor.deleteSelected());
+}
+
+// --- best deco gas suggestion (OC) ------------------------------------------
+// Adds the richest nitrox breathable at the deepest deco stop (pO2 limit), plus
+// O2 for the shallow stops, so the planner can auto-switch to them on ascent.
+function suggestDecoGases() {
+	const el = $('bestresult');
+	if (state.dive_mode === 1) { el.textContent = 'CCR: Deko läuft über den Loop-Setpoint.'; return; }
+	if (!lastDecoStops.length) { el.textContent = 'Kein Deko-Gas nötig (Nullzeittauchgang).'; return; }
+	const deepest = Math.max(...lastDecoStops.map((s) => s.depth)); // metres
+	const added = [];
+	const haveMix = (o2) => state.cylinders.some((c) => Math.abs(c.o2_permille - o2 * 10) < 5);
+	// deco nitrox at the deepest stop (rounded to a tidy 2 %)
+	if (deepest > 6) {
+		let o2 = Math.floor((state.ppo2_limit / (1 + deepest / 10)) * 100 / 2) * 2;
+		o2 = Math.max(22, Math.min(100, o2));
+		if (!haveMix(o2)) { state.cylinders.push({ o2_permille: o2 * 10, he_permille: 0, size_ml: 11100, workingpressure_mbar: 232000 }); added.push(mixName(o2 * 10, 0)); }
+	}
+	// O2 for the 6 m / 3 m stops
+	if (!haveMix(100)) { state.cylinders.push({ o2_permille: 1000, he_permille: 0, size_ml: 11100, workingpressure_mbar: 232000 }); added.push('O₂'); }
+	renderCylinders();
+	refreshGasColors();
+	recompute();
+	el.textContent = added.length ? `→ Deko-Gase ergänzt: ${added.join(', ')}` : 'Passende Deko-Gase sind bereits vorhanden.';
 }
 
 // Best mix for a target depth: max O2 within the working pO2 limit, plus enough
@@ -500,11 +531,8 @@ function flashShare(msg) {
 	setTimeout(() => { b.textContent = old; }, 1600);
 }
 
-function restoreFromHash() {
-	const h = location.hash.replace(/^#/, '');
-	if (!h) return false;
-	const obj = decodeState(h);
-	if (!obj) return false;
+function applyDecoded(obj) {
+	if (!obj || !Array.isArray(obj.w) || !Array.isArray(obj.c)) return false;
 	if (obj.p) Object.assign(state.params, obj.p);
 	if (typeof obj.m === 'number') state.dive_mode = obj.m;
 	if (typeof obj.spl === 'number') state.sp_low_mbar = obj.spl;
@@ -516,6 +544,59 @@ function restoreFromHash() {
 	state.cylinders = obj.c.map((a) => ({ o2_permille: a[0], he_permille: a[1], size_ml: a[2], workingpressure_mbar: a[3] }));
 	editor.setWaypoints(obj.w.map((a) => ({ time: a[0], depth: a[1], cyl: a[2] || 0 })), false);
 	return true;
+}
+
+function restoreFromHash() {
+	const h = location.hash.replace(/^#/, '');
+	return h ? applyDecoded(decodeState(h)) : false;
+}
+
+// Apply a decoded plan at runtime (not at boot): also refresh all UI.
+function loadPlanObject(obj) {
+	if (!applyDecoded(obj)) return;
+	syncInputsFromState();
+	renderCylinders();
+	refreshGasColors();
+	recompute();
+}
+
+// --- saved plans (localStorage) ---------------------------------------------
+const PLANS_KEY = 'webplanner_plans';
+const readPlans = () => { try { return JSON.parse(localStorage.getItem(PLANS_KEY)) || {}; } catch { return {}; } };
+const writePlans = (p) => localStorage.setItem(PLANS_KEY, JSON.stringify(p));
+
+function refreshPlanList() {
+	const sel = $('planList');
+	if (!sel) return;
+	const plans = readPlans();
+	const names = Object.keys(plans).sort();
+	sel.innerHTML = names.length ? names.map((n) => `<option>${n}</option>`).join('') : '<option value="">(keine)</option>';
+}
+
+function savePlan() {
+	const name = ($('planName').value || '').trim();
+	if (!name) { $('planName').focus(); return; }
+	const plans = readPlans();
+	plans[name] = encodeState();
+	writePlans(plans);
+	refreshPlanList();
+	$('planList').value = name;
+}
+
+function loadSelectedPlan() {
+	const name = $('planList').value;
+	if (!name) return;
+	const plans = readPlans();
+	if (plans[name]) { loadPlanObject(decodeState(plans[name])); $('planName').value = name; }
+}
+
+function deleteSelectedPlan() {
+	const name = $('planList').value;
+	if (!name) return;
+	const plans = readPlans();
+	delete plans[name];
+	writePlans(plans);
+	refreshPlanList();
 }
 
 // --- debounced recompute ----------------------------------------------------
@@ -534,4 +615,5 @@ bindParams();
 syncInputsFromState();
 renderCylinders();
 refreshGasColors();
+refreshPlanList();
 calculate(editor.getWaypoints());

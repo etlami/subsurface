@@ -31,10 +31,24 @@
 				<label class="sel-gas">Gas
 					<select id="selGas"></select>
 				</label>
+				<button id="delPoint" class="del-point" title="Ausgewählten Punkt löschen">Löschen</button>
 			</div>
 		</section>
 
 		<aside class="panel">
+			<fieldset>
+				<legend>Pläne</legend>
+				<div class="plans">
+					<input id="planName" type="text" placeholder="Name" maxlength="40">
+					<button id="savePlan" class="add">Speichern</button>
+				</div>
+				<div class="plans">
+					<select id="planList"></select>
+					<button id="loadPlan" class="add">Laden</button>
+					<button id="delPlan" class="add">Löschen</button>
+				</div>
+			</fieldset>
+
 			<fieldset>
 				<legend>Algorithmus</legend>
 				<label class="row">Modell
@@ -74,6 +88,7 @@
 				<div class="bestmix">
 					<label>Beste Mischung für <input id="bestdepth" type="number" min="6" max="120" value="50"> m</label>
 					<button id="bestmix" class="add">Berechnen</button>
+					<button id="bestdeco" class="add">Deko-Gase vorschlagen</button>
 					<div id="bestresult" class="bestresult"></div>
 				</div>
 			</fieldset>
