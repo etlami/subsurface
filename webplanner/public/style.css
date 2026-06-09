@@ -44,6 +44,22 @@ header .sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
 .bestmix input { width: 64px; }
 .bestresult { margin-top: 6px; color: #2c7a4b; font-size: 12.5px; min-height: 1em; }
 
+#mingas { font-size: 13px; }
+#mingas .muted, .muted { color: var(--muted); font-size: 12px; }
+
+/* print / PDF layout: drop interactive chrome, stack content */
+@media print {
+	body { background: #fff; }
+	header { border: none; padding: 0 0 8px; }
+	.header-actions, .hint, .add, .bestmix, .del, #addcyl,
+	.row.check, #snap { display: none !important; }
+	main { display: block; padding: 0; }
+	.profile-pane, fieldset { border: 1px solid #ccc; box-shadow: none; break-inside: avoid; }
+	.panel { margin-top: 10px; }
+	#profile { height: 360px; }
+	input, select { border: none; padding: 0; background: none; }
+}
+
 main {
 	display: grid;
 	grid-template-columns: 1fr 360px;

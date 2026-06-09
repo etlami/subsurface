@@ -66,6 +66,37 @@ function decoStopMarkers(samples) {
 	return out;
 }
 
+// CCR setpoint-change markers: where the profile crosses the switch depth.
+function setpointMarkers(samples) {
+	const sw = state.sp_switch_depth_mm;
+	const out = [];
+	for (let i = 1; i < samples.length; i++) {
+		const a = samples[i - 1].depth_mm, b = samples[i].depth_mm;
+		if ((a < sw) !== (b < sw)) {
+			const sp = (b >= sw ? state.sp_high_mbar : state.sp_low_mbar) / 1000;
+			out.push({ time_s: samples[i].time_s, depth_mm: b, label: `SP ${sp.toFixed(1)}` });
+		}
+	}
+	return out;
+}
+
+// Rock-bottom / minimum gas reserve for the back gas (cylinder 0): gas for two
+// divers to solve a problem at the deepest depth and ascend at 9 m/min on a
+// stressed SAC (1.5x). Approximate, for situational awareness.
+function renderMinGas(maxDepth_mm) {
+	const el = $('mingas');
+	if (!el) return;
+	const d = maxDepth_mm / 1000;
+	const sacReserve = (state.params.bottomsac_mlpm / 1000) * 1.5;
+	const tProblem = 2, ascentRate = 9;
+	const tAscent = d / ascentRate;
+	const reserveL = sacReserve * 2 * ((1 + d / 10) * tProblem + (1 + (d / 2) / 10) * tAscent);
+	const back = state.cylinders[0];
+	const volL = back.size_ml / 1000;
+	const bar = volL > 0 ? reserveL / volL : 0;
+	el.innerHTML = `Reserve (Rock-Bottom, 2 Taucher) ≈ <b>${Math.round(reserveL)} L</b> = <b>${Math.round(bar)} bar</b><br><span class="muted">Flasche 0 (${gasName(back)}, ${volL.toFixed(0)} L) · ${sacReserve.toFixed(0)} L/min · Aufstieg 9 m/min</span>`;
+}
+
 // ppO2 (bar) of a gas at a depth in mm (seawater approx P_abs = 1 + d/10).
 const ppo2At = (o2_permille, depth_mm) => (o2_permille / 1000) * (1 + depth_mm / 10000);
 
@@ -145,6 +176,7 @@ function renderResult(res, waypoints) {
 		switches,
 		stops: decoStopMarkers(samples),
 		setpointDepthMm: state.dive_mode === 1 ? state.sp_switch_depth_mm : null,
+		spMarkers: state.dive_mode === 1 ? setpointMarkers(samples) : [],
 	});
 
 	let maxDepth = 0, runtime = 0;
@@ -165,9 +197,15 @@ function renderResult(res, waypoints) {
 
 	const errTxt = res.error === 0 ? '' : ` — Hinweis: Planner-Code ${res.error}`;
 	const cnsClass = res.cns >= 100 ? 'o2-err' : res.cns >= 80 ? 'o2-warn' : '';
+	// Surface GF: shown once the dive incurs deco (Subsurface behaviour). Amber
+	// when over 100 % (you would exceed your surfacing M-value -> deco needed).
+	const sgf = (stops.length > 0 || res.surface_gf >= 100) && res.surface_gf > 0
+		? ` · <span class="${res.surface_gf >= 100 ? 'o2-warn' : ''}">Surface GF ${res.surface_gf}%</span>` : '';
 	$('summary').innerHTML =
 		`Max. Tiefe ${(maxDepth / 1000).toFixed(1)} m · Laufzeit ${(runtime / 60).toFixed(0)} min` +
-		` · <span class="${cnsClass}">CNS ${res.cns}%</span> · OTU ${res.otu}` + errTxt;
+		` · <span class="${cnsClass}">CNS ${res.cns}%</span> · OTU ${res.otu}` + sgf + errTxt;
+
+	renderMinGas(maxDepth);
 
 	$('stops').innerHTML = stops.length
 		? '<table><tr><th>Tiefe</th><th>Stopp</th></tr>' +
@@ -320,6 +358,7 @@ function bindParams() {
 	$('endlimit').addEventListener('change', () => { state.end_limit_m = Math.round(parseFloat($('endlimit').value) || 30); recompute(); });
 	$('bestmix').addEventListener('click', suggestBestMix);
 	$('export').addEventListener('click', exportPng);
+	$('print').addEventListener('click', () => window.print());
 }
 
 // Best mix for a target depth: max O2 within the working pO2 limit, plus enough
