@@ -39,7 +39,7 @@ export class ProfileEditor {
 		this.dragIdx = -1;
 		this.snap = true;
 		// Bigger touch target on coarse pointers (phones/tablets).
-		this.hitPad = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ? 16 : 4;
+		this.hitPad = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ? 22 : 4;
 
 		this._bind();
 		this.resize();
@@ -50,6 +50,7 @@ export class ProfileEditor {
 		c.addEventListener('pointerdown', (e) => this._onDown(e));
 		c.addEventListener('pointermove', (e) => this._onMove(e));
 		window.addEventListener('pointerup', (e) => this._onUp(e));
+		window.addEventListener('pointercancel', (e) => this._onUp(e));
 		c.addEventListener('dblclick', (e) => this._onDblClick(e));
 		c.addEventListener('contextmenu', (e) => { e.preventDefault(); this._deleteNear(e); });
 		window.addEventListener('resize', () => this.resize());
@@ -118,6 +119,9 @@ export class ProfileEditor {
 	}
 
 	_rescale() {
+		// Keep the axes fixed while a waypoint is being dragged, otherwise the
+		// time/depth scale shifts under the finger and the handle appears to jump.
+		if (this.dragIdx >= 0) return;
 		let mt = 10 * 60, md = 10000;
 		for (const w of this.waypoints) { mt = Math.max(mt, w.time); md = Math.max(md, w.depth); }
 		if (this.computed) {
@@ -157,7 +161,10 @@ export class ProfileEditor {
 			this._sort();
 			this.dragIdx = this.waypoints.indexOf(w);
 			this._select(this.dragIdx);
-			this._changed();
+			this.canvas.setPointerCapture?.(e.pointerId);
+			// Render live; defer the (heavy) recompute until the drag ends.
+			this._dirty = true;
+			this.render();
 		}
 	}
 
@@ -183,10 +190,19 @@ export class ProfileEditor {
 		this.dragIdx = this.waypoints.indexOf(w);
 		this._select(this.dragIdx);
 		this.canvas.style.cursor = 'grabbing';
-		this._changed();
+		// Move the handle live (axes stay frozen); the recompute waits for pointerup.
+		this._dirty = true;
+		this.render();
 	}
 
-	_onUp() { this.dragIdx = -1; }
+	_onUp(e) {
+		if (this.dragIdx < 0 && !this._dirty) return;
+		this.canvas.releasePointerCapture?.(e?.pointerId);
+		this.dragIdx = -1;
+		this.canvas.style.cursor = 'crosshair';
+		if (this._dirty) { this._dirty = false; this._changed(); } // rescale + recompute now
+		else this.render();
+	}
 	_onDblClick(e) { this._deleteNear(e); }
 
 	_deleteNear(e) {
