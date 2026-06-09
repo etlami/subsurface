@@ -182,6 +182,8 @@ struct JsCylinder {
 	int he_permille = 0;       // He fraction in permille
 	int size_ml = 12000;       // cylinder water volume in ml
 	int workingpressure_mbar = 232000;
+	int cylinder_use = 0;      // 0 OC_GAS, 1 DILUENT, 2 OXYGEN, 3 NOT_USED
+	std::string description;   // e.g. "SP 1.6" marks a CCR setpoint change
 };
 
 struct JsSegment {
@@ -215,6 +217,7 @@ struct JsSample {
 	int stoptime_s = 0;
 	int ceiling_mm = 0;        // decompression ceiling (tissue tolerance)
 	int pressure_mbar = 0;     // primary cylinder pressure
+	int setpoint_mbar = 0;     // CCR setpoint at this sample (0 = OC)
 	bool in_deco = false;
 };
 
@@ -266,6 +269,16 @@ static JsResult run_plan(const JsParams &params,
 	struct dive dive;
 	struct deco_state ds = {};
 
+	// A DILUENT cylinder means this is a CCR dive. The dive computer's divemode
+	// must be set BEFORE reset_cylinders()/get_effective_divemode(), otherwise a
+	// CCR diluent is demoted to OC and setpoints are ignored on the ascent.
+	bool ccr = false;
+	for (const JsCylinder &c : cylinders)
+		if (static_cast<enum cylinderuse>(c.cylinder_use) == DILUENT)
+			ccr = true;
+	if (!dive.dcs.empty())
+		dive.dcs[0].divemode = ccr ? CCR : OC;
+
 	// Cylinders. Highest index first so reallocation does not invalidate
 	// earlier pointers (see note in tests/testplan.cpp).
 	for (int i = static_cast<int>(cylinders.size()) - 1; i >= 0; --i) {
@@ -275,6 +288,9 @@ static JsResult run_plan(const JsParams &params,
 		cyl->gasmix.he.permille = c.he_permille;
 		cyl->type.size.mliter = c.size_ml;
 		cyl->type.workingpressure.mbar = c.workingpressure_mbar;
+		cyl->cylinder_use = static_cast<enum cylinderuse>(c.cylinder_use);
+		if (!c.description.empty())
+			cyl->type.description = c.description;
 	}
 	reset_cylinders(&dive, true);
 
@@ -316,6 +332,7 @@ static JsResult run_plan(const JsParams &params,
 			js.stopdepth_mm = smp.stopdepth.mm;
 			js.stoptime_s = smp.stoptime.seconds;
 			js.pressure_mbar = smp.pressure[0].mbar;
+			js.setpoint_mbar = smp.setpoint.mbar;
 			js.in_deco = smp.in_deco;
 			result.samples.push_back(js);
 		}
@@ -375,7 +392,9 @@ EMSCRIPTEN_BINDINGS(subsurface_planner) {
 		.field("o2_permille", &JsCylinder::o2_permille)
 		.field("he_permille", &JsCylinder::he_permille)
 		.field("size_ml", &JsCylinder::size_ml)
-		.field("workingpressure_mbar", &JsCylinder::workingpressure_mbar);
+		.field("workingpressure_mbar", &JsCylinder::workingpressure_mbar)
+		.field("cylinder_use", &JsCylinder::cylinder_use)
+		.field("description", &JsCylinder::description);
 
 	value_object<JsSegment>("Segment")
 		.field("time_incr_s", &JsSegment::time_incr_s)
@@ -402,6 +421,7 @@ EMSCRIPTEN_BINDINGS(subsurface_planner) {
 		.field("tts_s", &JsSample::tts_s)
 		.field("stopdepth_mm", &JsSample::stopdepth_mm)
 		.field("ceiling_mm", &JsSample::ceiling_mm)
+		.field("setpoint_mbar", &JsSample::setpoint_mbar)
 		.field("stoptime_s", &JsSample::stoptime_s)
 		.field("pressure_mbar", &JsSample::pressure_mbar)
 		.field("in_deco", &JsSample::in_deco);
