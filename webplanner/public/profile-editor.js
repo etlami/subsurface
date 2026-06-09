@@ -262,23 +262,38 @@ export class ProfileEditor {
 		ctx.fill();
 	}
 
+	// Decompression ceiling: the depth you must not ascend above. Drawn as a red
+	// band from the surface down to the ceiling (the forbidden zone), plus a red
+	// line along the ceiling itself — visible only while a ceiling exists.
 	_drawCeiling() {
 		const s = this.computed.samples;
-		let any = false;
+		const cm = (i) => (s[i] && s[i].ceiling_mm) || 0;
+		let hasCeil = false;
+		for (let i = 0; i < s.length; i++) if (cm(i) > 0) { hasCeil = true; break; }
+		if (!hasCeil) return;
 		const ctx = this.ctx;
+		// filled forbidden zone (surface .. ceiling)
+		ctx.beginPath();
+		ctx.moveTo(this._x(s[0].time_s), this._y(0));
+		for (let i = 0; i < s.length; i++) ctx.lineTo(this._x(s[i].time_s), this._y(cm(i)));
+		for (let i = s.length - 1; i >= 0; i--) ctx.lineTo(this._x(s[i].time_s), this._y(0));
+		ctx.closePath();
+		ctx.fillStyle = 'rgba(214,69,65,0.16)';
+		ctx.fill();
+		// ceiling line where it exists
+		ctx.strokeStyle = 'rgba(214,69,65,0.95)';
+		ctx.lineWidth = 1.8;
+		ctx.setLineDash([5, 3]);
+		let pen = false;
 		ctx.beginPath();
 		for (let i = 0; i < s.length; i++) {
-			const c = s[i].stopdepth_mm || 0;
+			const c = cm(i);
 			const x = this._x(s[i].time_s), y = this._y(c);
-			if (!any) { ctx.moveTo(x, y); any = true; } else { ctx.lineTo(x, y); }
+			if (c > 0) { if (!pen) { ctx.moveTo(x, y); pen = true; } else ctx.lineTo(x, y); }
+			else pen = false;
 		}
-		if (any) {
-			ctx.strokeStyle = 'rgba(214,69,65,0.9)';
-			ctx.lineWidth = 1.5;
-			ctx.setLineDash([4, 3]);
-			ctx.stroke();
-			ctx.setLineDash([]);
-		}
+		ctx.stroke();
+		ctx.setLineDash([]);
 	}
 
 	_depthAtTime(timeS) {
@@ -293,15 +308,18 @@ export class ProfileEditor {
 		const stops = this.computed.stops;
 		if (!stops || !stops.length) return;
 		const ctx = this.ctx;
-		ctx.font = '10px system-ui, sans-serif';
+		ctx.font = 'bold 11px system-ui, sans-serif';
 		ctx.textAlign = 'left';
 		ctx.textBaseline = 'middle';
 		for (const st of stops) {
 			const x = this._x(st.time_s), y = this._y(st.depth_mm);
-			ctx.fillStyle = 'rgba(214,69,65,0.9)';
-			ctx.beginPath(); ctx.arc(x, y, 2.5, 0, Math.PI * 2); ctx.fill();
+			ctx.fillStyle = '#d64541';
+			ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+			const label = `${(st.depth_mm / 1000).toFixed(0)} m / ${st.min}′`;
+			ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+			ctx.strokeText(label, x + 6, y);
 			ctx.fillStyle = '#9a3b38';
-			ctx.fillText(`${(st.depth_mm / 1000).toFixed(0)}m ${st.min}′`, x + 5, y);
+			ctx.fillText(label, x + 6, y);
 		}
 	}
 

@@ -134,10 +134,12 @@ static double ss_calculate_cns_dive(const struct dive &dive)
 // Re-walks the planned samples through a fresh Buehlmann deco state (the plan()
 // state is consumed) and applies the surface-GF formula from
 // core/profile.cpp::calculate_deco_information (the per-tissue max).
-static double ss_max_surface_gf(const struct dive &dive, short gflow, short gfhigh,
-				double surface_pressure_bar, bool in_planner)
+static double ss_deco_walk(const struct dive &dive, short gflow, short gfhigh,
+			   double surface_pressure_bar, bool in_planner,
+			   std::vector<int> &ceilings_mm)
 {
 	const struct divecomputer &dc = dive.dcs[0];
+	ceilings_mm.assign(dc.samples.size(), 0);
 	if (dc.samples.size() < 2)
 		return 0.0;
 	struct deco_state ds = {};
@@ -146,22 +148,23 @@ static double ss_max_surface_gf(const struct dive &dive, short gflow, short gfhi
 	gasmix_loop loop_gas(dive, dc);
 	divemode_loop loop_mode(dc);
 	double maxgf = 0.0;
-	for (auto [psample, sample] : pairwise_range(dc.samples)) {
+	for (size_t i = 1; i < dc.samples.size(); i++) {
+		const struct sample &psample = dc.samples[i - 1];
+		const struct sample &sample = dc.samples[i];
 		int t0 = psample.time.seconds, t1 = sample.time.seconds;
-		if (t1 <= t0)
-			continue;
 		[[maybe_unused]] auto [dm, _ci, gas] = get_dive_status_at(dive, dc, t1, &loop_mode, &loop_gas);
-		if (!gas)
-			continue;
-		int step = (t1 - t0 < 20) ? (t1 - t0) : 20;
-		for (int j = t0 + step; j <= t1; j += step) {
-			depth_t nd = interpolate(psample.depth, sample.depth, j - t0, t1 - t0);
-			add_segment(&ds, dive.depth_to_bar(nd), *gas, step, sample.setpoint.mbar, dm, 0, in_planner);
-			if ((t1 - j < step) && (j < t1))
-				step = t1 - j;
+		if (t1 > t0 && gas) {
+			int step = (t1 - t0 < 20) ? (t1 - t0) : 20;
+			for (int j = t0 + step; j <= t1; j += step) {
+				depth_t nd = interpolate(psample.depth, sample.depth, j - t0, t1 - t0);
+				add_segment(&ds, dive.depth_to_bar(nd), *gas, step, sample.setpoint.mbar, dm, 0, in_planner);
+				if ((t1 - j < step) && (j < t1))
+					step = t1 - j;
+			}
 		}
 		double amb = dive.depth_to_bar(sample.depth);
-		tissue_tolerance_calc(&ds, &dive, amb, in_planner);
+		double tol = tissue_tolerance_calc(&ds, &dive, amb, in_planner);
+		ceilings_mm[i] = deco_allowed_depth(tol, surface_pressure_bar, &dive, true).mm;
 		for (int k = 0; k < 16; k++) {
 			double sm = ds.buehlmann_inertgas_a[k] + surface_pressure_bar / ds.buehlmann_inertgas_b[k];
 			double sgf = 100.0 * (ds.tissue_inertgas_saturation[k] - surface_pressure_bar) / (sm - surface_pressure_bar);
@@ -210,6 +213,7 @@ struct JsSample {
 	int tts_s = 0;
 	int stopdepth_mm = 0;
 	int stoptime_s = 0;
+	int ceiling_mm = 0;        // decompression ceiling (tissue tolerance)
 	int pressure_mbar = 0;     // primary cylinder pressure
 	bool in_deco = false;
 };
@@ -346,15 +350,19 @@ static JsResult run_plan(const JsParams &params,
 		result.gas.push_back(g);
 	}
 
-	// O2 exposure over the planned profile.
+	// O2 exposure + decompression ceiling + surface GF over the planned profile.
 	if (!dive.dcs.empty() && dive.dcs[0].samples.size() > 1) {
 		result.cns = static_cast<int>(lrint(ss_calculate_cns_dive(dive)));
 		result.otu = ss_calculate_otu(dive);
-		// Surface GF is a Buehlmann concept; only meaningful in that mode.
-		if (prefs.planner_deco_mode == BUEHLMANN)
-			result.surface_gf = static_cast<int>(lrint(ss_max_surface_gf(
-				dive, diveplan.gflow, diveplan.gfhigh,
-				params.surface_pressure_mbar / 1000.0, true)));
+		// Surface GF and the per-sample ceiling are Buehlmann concepts.
+		if (prefs.planner_deco_mode == BUEHLMANN) {
+			std::vector<int> ceilings;
+			double gf = ss_deco_walk(dive, diveplan.gflow, diveplan.gfhigh,
+						 params.surface_pressure_mbar / 1000.0, true, ceilings);
+			result.surface_gf = static_cast<int>(lrint(gf));
+			for (size_t i = 0; i < result.samples.size() && i < ceilings.size(); i++)
+				result.samples[i].ceiling_mm = ceilings[i];
+		}
 	}
 
 	return result;
@@ -393,6 +401,7 @@ EMSCRIPTEN_BINDINGS(subsurface_planner) {
 		.field("ndl_s", &JsSample::ndl_s)
 		.field("tts_s", &JsSample::tts_s)
 		.field("stopdepth_mm", &JsSample::stopdepth_mm)
+		.field("ceiling_mm", &JsSample::ceiling_mm)
 		.field("stoptime_s", &JsSample::stoptime_s)
 		.field("pressure_mbar", &JsSample::pressure_mbar)
 		.field("in_deco", &JsSample::in_deco);
